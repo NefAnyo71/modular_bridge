@@ -255,3 +255,4 @@ void main() {
 | Event dinlemek (Otomatik Dispose) | `subscribe<BenimEventim>(bridge, (e) => ...)` |
 | Ortam değiştirmek (DEV -> PROD) | `config.switchEnvironment(BridgeEnvironment.prod)` |
 | Testte Mock ile değiştirmek | `bridge.override<Servis>(MockServis())` |
+
