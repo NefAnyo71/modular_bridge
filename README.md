@@ -5,6 +5,8 @@
 [![Flutter 3.0+](https://img.shields.io/badge/Flutter-3.0+-02569B.svg?logo=flutter)](https://flutter.dev)
 [![Dart 3.0+](https://img.shields.io/badge/Dart-3.0+-0175C2.svg?logo=dart)](https://dart.dev)
 
+> 🇹🇷 **Türkçe Dokümantasyon:** Adım adım Türkçe kullanım kılavuzu için [KULLANIM_KILAVUZU.md](KULLANIM_KILAVUZU.md) dosyasına göz atabilirsiniz.
+
 **Modular Bridge** is a lightweight, high-performance, and **zero-external-dependency** architectural framework for large-scale, modular (Clean Architecture / Feature-first) Flutter projects. It solves **cross-module dependency injection, type-safe flavor/environment leakage, and decoupled event-driven communication** while preventing memory leaks out of the box.
 
 ---
