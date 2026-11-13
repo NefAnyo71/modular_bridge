@@ -35,3 +35,4 @@ final class CartModule extends FeatureModule {
     });
   }
 }
+

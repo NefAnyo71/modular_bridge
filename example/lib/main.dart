@@ -1,15 +1,21 @@
 // ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
 import 'analytics/analytics_module.dart';
+import 'analytics/analytics_providers.dart';
 import 'auth/auth_module.dart';
-import 'auth/auth_repository.dart';
+import 'auth/auth_providers.dart';
 import 'cart/cart_module.dart';
-import 'cart/cart_service.dart';
+import 'cart/cart_providers.dart';
 import 'core/core_module.dart';
-import 'home/home_controller.dart';
+import 'core/core_providers.dart';
 import 'home/home_module.dart';
+import 'home/home_providers.dart';
+
+/// Riverpod StateProvider tracking the active bottom navigation tab index.
+final selectedTabProvider = StateProvider<int>((ref) => 0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,7 +24,7 @@ void main() async {
   final config = BridgeConfig(
     environment: BridgeEnvironment.dev,
     commonValues: {
-      'appName': 'ModularBridge Showcase',
+      'appName': 'ModularBridge Riverpod Showcase',
       'version': '1.0.0',
     },
     environmentValues: {
@@ -55,8 +61,10 @@ void main() async {
   ]);
 
   runApp(
-    const ModularBridgeProvider(
-      child: ModularBridgeExampleApp(),
+    const ProviderScope(
+      child: ModularBridgeProvider(
+        child: ModularBridgeExampleApp(),
+      ),
     ),
   );
 }
@@ -67,7 +75,7 @@ class ModularBridgeExampleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ModularBridge Showcase',
+      title: 'ModularBridge Riverpod Showcase',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -79,21 +87,17 @@ class ModularBridgeExampleApp extends StatelessWidget {
   }
 }
 
-class ShowcaseScreen extends StatefulWidget {
+/// Main showcase screen built completely as a Riverpod [ConsumerWidget].
+///
+/// Notice: ZERO [setState] calls. All reactive state flows cleanly through Riverpod Notifiers.
+class ShowcaseScreen extends ConsumerWidget {
   const ShowcaseScreen({super.key});
 
   @override
-  State<ShowcaseScreen> createState() => _ShowcaseScreenState();
-}
-
-class _ShowcaseScreenState extends State<ShowcaseScreen> {
-  int _currentTabIndex = 0;
-  bool _isMockActive = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final bridge = context.bridge;
-    final config = context.config;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final environment = ref.watch(environmentProvider);
+    final selectedTab = ref.watch(selectedTabProvider);
+    final bridge = ref.watch(bridgeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -109,21 +113,21 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
         ),
         elevation: 1,
         actions: [
-          // Active flavor chip
+          // Active flavor badge
           Container(
             margin: const EdgeInsets.symmetric(vertical: 10),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
-              color: config.environment.isProd
+              color: environment.isProd
                   ? Colors.red.shade100
-                  : (config.environment.isStaging
+                  : (environment.isStaging
                       ? Colors.amber.shade100
                       : Colors.green.shade100),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: config.environment.isProd
+                color: environment.isProd
                     ? Colors.red.shade400
-                    : (config.environment.isStaging
+                    : (environment.isStaging
                         ? Colors.amber.shade700
                         : Colors.green.shade600),
               ),
@@ -132,27 +136,27 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  config.environment.isProd
+                  environment.isProd
                       ? Icons.rocket_launch
-                      : (config.environment.isStaging
+                      : (environment.isStaging
                           ? Icons.science
                           : Icons.developer_mode),
                   size: 16,
-                  color: config.environment.isProd
+                  color: environment.isProd
                       ? Colors.red.shade900
-                      : (config.environment.isStaging
+                      : (environment.isStaging
                           ? Colors.amber.shade900
                           : Colors.green.shade900),
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  config.environment.name.toUpperCase(),
+                  environment.name.toUpperCase(),
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
-                    color: config.environment.isProd
+                    color: environment.isProd
                         ? Colors.red.shade900
-                        : (config.environment.isStaging
+                        : (environment.isStaging
                             ? Colors.amber.shade900
                             : Colors.green.shade900),
                   ),
@@ -173,14 +177,20 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                 HomeModule(),
                 CartModule(),
               ]);
+              ref.invalidate(environmentProvider);
+              ref.invalidate(modulesProvider);
+              ref.invalidate(authProvider);
+              ref.invalidate(cartProvider);
+              ref.invalidate(homeFeedProvider);
+              ref.invalidate(eventLogsProvider);
+
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('ModularBridge container reset & re-initialized!'),
+                    content: Text('ModularBridge container reset & Riverpod refreshed!'),
                     duration: Duration(seconds: 2),
                   ),
                 );
-                setState(() {});
               }
             },
           ),
@@ -188,17 +198,19 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
         ],
       ),
       body: IndexedStack(
-        index: _currentTabIndex,
-        children: [
-          _buildAppFlowTab(context),
-          _buildEventConsoleTab(context),
-          _buildModuleInspectorTab(context),
-          _buildConfigStudioTab(context),
+        index: selectedTab,
+        children: const [
+          _AppFlowTab(),
+          _EventConsoleTab(),
+          _ModuleInspectorTab(),
+          _ConfigStudioTab(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentTabIndex,
-        onDestinationSelected: (index) => setState(() => _currentTabIndex = index),
+        selectedIndex: selectedTab,
+        onDestinationSelected: (index) {
+          ref.read(selectedTabProvider.notifier).state = index;
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
@@ -224,15 +236,22 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
       ),
     );
   }
+}
 
-  // ===========================================================================
-  // TAB 1: INTERACTIVE APP FLOW (Auth, Cart, Home)
-  // ===========================================================================
-  Widget _buildAppFlowTab(BuildContext context) {
-    final bridge = context.bridge;
-    final authRepo = bridge.tryGet<AuthRepository>();
-    final homeController = bridge.tryGet<HomeController>();
-    final cartService = bridge.tryGet<CartService>();
+// =============================================================================
+// TAB 1: INTERACTIVE APP FLOW (Auth, Cart, Home via Riverpod)
+// =============================================================================
+class _AppFlowTab extends ConsumerWidget {
+  const _AppFlowTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authProvider);
+    final isMockActive = ref.watch(mockOverrideProvider);
+    final cartItems = ref.watch(cartProvider);
+    final cartCount = ref.watch(cartCountProvider);
+    final cartTotal = ref.watch(cartTotalProvider);
+    final homeFeed = ref.watch(homeFeedProvider);
 
     return ListView(
       padding: const EdgeInsets.all(16.0),
@@ -251,8 +270,8 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
               SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'This tab demonstrates decoupled communication: CartModule and HomeModule '
-                  'react to UserLoggedOutEvent without importing AuthModule!',
+                  '100% Riverpod State Management: CartModule & HomeModule react to '
+                  'UserLoggedOutEvent without importing AuthModule!',
                   style: TextStyle(fontSize: 13, color: Colors.indigo),
                 ),
               ),
@@ -290,75 +309,59 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                       children: [
                         const Text('Use Mock:', style: TextStyle(fontSize: 12)),
                         Switch(
-                          value: _isMockActive,
-                          onChanged: authRepo == null
-                              ? null
-                              : (useMock) {
-                                  setState(() {
-                                    _isMockActive = useMock;
-                                    if (useMock) {
-                                      bridge.override<AuthRepository>(MockAuthRepository());
-                                    } else {
-                                      bridge.override<AuthRepository>(
-                                        AuthRepositoryImpl(
-                                          apiClient: bridge.get<ApiClient>(),
-                                          logger: bridge.get<LoggingService>(),
-                                          bridge: bridge,
-                                        ),
-                                      );
-                                    }
-                                  });
-                                },
+                          value: isMockActive,
+                          onChanged: (useMock) {
+                            ref
+                                .read(mockOverrideProvider.notifier)
+                                .toggle(useMock);
+                          },
                         ),
                       ],
                     ),
                   ],
                 ),
                 Text(
-                  _isMockActive
-                      ? '● Active: MockAuthRepository (1-line test override)'
+                  isMockActive
+                      ? '● Active: MockAuthRepository (1-line test override via Riverpod)'
                       : '● Active: AuthRepositoryImpl (Real dependency)',
                   style: TextStyle(
                     fontSize: 12,
-                    color: _isMockActive ? Colors.deepOrange : Colors.green.shade700,
+                    color: isMockActive ? Colors.deepOrange : Colors.green.shade700,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 const Divider(height: 24),
-                if (authRepo == null)
-                  const Text('AuthModule is currently unloaded.')
-                else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.login),
-                          label: Text(
-                            authRepo.isAuthenticated
-                                ? 'Logged In as ${authRepo.currentEmail}'
-                                : 'Login (developer@flutter.io)',
-                          ),
-                          onPressed: authRepo.isAuthenticated
-                              ? null
-                              : () async {
-                                  await authRepo.login('developer@flutter.io', 'pass123');
-                                  setState(() {});
-                                },
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.login),
+                        label: Text(
+                          authState.isAuthenticated
+                              ? 'Logged In: ${authState.email}'
+                              : 'Login (developer@flutter.io)',
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.logout),
-                        label: const Text('Logout'),
-                        onPressed: !authRepo.isAuthenticated
+                        onPressed: authState.isAuthenticated
                             ? null
                             : () async {
-                                await authRepo.logout();
-                                setState(() {});
+                                await ref
+                                    .read(authProvider.notifier)
+                                    .login('developer@flutter.io', 'pass123');
                               },
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.logout),
+                      label: const Text('Logout'),
+                      onPressed: !authState.isAuthenticated
+                          ? null
+                          : () async {
+                              await ref.read(authProvider.notifier).logout();
+                            },
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -386,14 +389,14 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                         const Icon(Icons.shopping_cart_outlined, color: Colors.teal),
                         const SizedBox(width: 8),
                         Text(
-                          'CartModule (${cartService?.itemCount ?? 0} items)',
+                          'CartModule ($cartCount items)',
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                       ],
                     ),
-                    if (cartService != null && cartService.itemCount > 0)
+                    if (cartCount > 0)
                       Text(
-                        'Total: \$${cartService.totalPrice.toStringAsFixed(2)}',
+                        'Total: \$${cartTotal.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.teal,
@@ -404,56 +407,63 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Listens to UserLoggedOutEvent with auto-dispose. If user logs out, cart clears instantly.',
+                  'CartNotifier listens to UserLoggedOutEvent via BridgeEventBus. '
+                  'Logging out clears this cart automatically!',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const Divider(height: 20),
-                if (cartService == null)
-                  const Text('CartModule is currently unloaded.')
-                else ...[
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ActionChip(
+                      avatar: const Icon(Icons.add, size: 16),
+                      label: const Text('Flutter Hoodie (\$49)'),
+                      onPressed: () {
+                        ref.read(cartProvider.notifier).addItem('Flutter Hoodie', 49.0);
+                      },
+                    ),
+                    ActionChip(
+                      avatar: const Icon(Icons.add, size: 16),
+                      label: const Text('Dart Mug (\$15)'),
+                      onPressed: () {
+                        ref.read(cartProvider.notifier).addItem('Dart Mug', 15.0);
+                      },
+                    ),
+                    ActionChip(
+                      avatar: const Icon(Icons.add, size: 16),
+                      label: const Text('Dev Laptop (\$1,299)'),
+                      onPressed: () {
+                        ref.read(cartProvider.notifier).addItem('Dev Laptop', 1299.0);
+                      },
+                    ),
+                    if (cartCount > 0)
                       ActionChip(
-                        avatar: const Icon(Icons.add, size: 16),
-                        label: const Text('Flutter Hoodie (\$49)'),
-                        onPressed: () => cartService.addItem('Flutter Hoodie', 49.0),
+                        avatar: const Icon(Icons.clear_all, size: 16, color: Colors.red),
+                        label: const Text('Clear Cart'),
+                        onPressed: () {
+                          ref.read(cartProvider.notifier).clear();
+                        },
                       ),
-                      ActionChip(
-                        avatar: const Icon(Icons.add, size: 16),
-                        label: const Text('Dart Mug (\$15)'),
-                        onPressed: () => cartService.addItem('Dart Mug', 15.0),
-                      ),
-                      ActionChip(
-                        avatar: const Icon(Icons.add, size: 16),
-                        label: const Text('Dev Laptop (\$1,299)'),
-                        onPressed: () => cartService.addItem('Dev Laptop', 1299.0),
-                      ),
-                      if (cartService.itemCount > 0)
-                        ActionChip(
-                          avatar: const Icon(Icons.clear_all, size: 16, color: Colors.red),
-                          label: const Text('Clear Cart'),
-                          onPressed: () => cartService.clear(),
-                        ),
-                    ],
-                  ),
-                  if (cartService.items.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    ...cartService.items.map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('• ${item.name}', style: const TextStyle(fontSize: 13)),
-                            Text('\$${item.price.toStringAsFixed(2)}',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          ],
-                        ),
+                  ],
+                ),
+                if (cartItems.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ...cartItems.map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('• ${item.name}', style: const TextStyle(fontSize: 13)),
+                          Text(
+                            '\$${item.price.toStringAsFixed(2)}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ],
               ],
             ),
@@ -479,38 +489,36 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                     Icon(Icons.feed_outlined, color: Colors.deepPurple),
                     SizedBox(width: 8),
                     Text(
-                      'HomeModule (Personalized Feed)',
+                      'HomeModule (Riverpod Stream Feed)',
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Populated when UserLoggedInEvent arrives; automatically emptied on UserLoggedOutEvent.',
+                  'Feed is managed by HomeFeedNotifier which listens to UserLoggedInEvent / UserLoggedOutEvent.',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const Divider(height: 20),
-                if (homeController == null)
-                  const Text('HomeModule is currently unloaded.')
-                else if (homeController.isLoading)
+                if (homeFeed.isLoading)
                   const Center(
                     child: Padding(
                       padding: EdgeInsets.all(16.0),
                       child: CircularProgressIndicator(),
                     ),
                   )
-                else if (homeController.feedItems.isEmpty)
+                else if (homeFeed.items.isEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     alignment: Alignment.center,
                     child: const Text(
-                      'No feed items.\nLog in to broadcast UserLoggedInEvent.',
+                      'No feed items.\nLog in to trigger UserLoggedInEvent across the bridge.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey),
                     ),
                   )
                 else
-                  ...homeController.feedItems.map(
+                  ...homeFeed.items.map(
                     (item) => ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -525,16 +533,20 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
       ],
     );
   }
+}
 
-  // ===========================================================================
-  // TAB 2: LIVE EVENT CONSOLE (Real-time Event Stream)
-  // ===========================================================================
-  Widget _buildEventConsoleTab(BuildContext context) {
-    final logService = context.bridge.tryGet<EventLogService>();
+// =============================================================================
+// TAB 2: LIVE EVENT CONSOLE (Real-time Event Stream via Riverpod)
+// =============================================================================
+class _EventConsoleTab extends ConsumerWidget {
+  const _EventConsoleTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final eventLogs = ref.watch(eventLogsProvider);
 
     return Column(
       children: [
-        // Console Header
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           color: Colors.grey.shade100,
@@ -544,7 +556,7 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Event Bus Stream (${logService?.history.length ?? 0})',
+                  'Event Bus Stream (${eventLogs.length})',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -553,76 +565,71 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                 icon: const Icon(Icons.send, size: 14),
                 label: const Text('Fire Event', style: TextStyle(fontSize: 12)),
                 onPressed: () {
-                  context.bridge.publish(
-                    _SamplePingEvent('Manual ping from Event Console'),
-                  );
+                  ref.read(bridgeProvider).publish(
+                        _SamplePingEvent('Manual ping from Event Console'),
+                      );
                 },
               ),
               const SizedBox(width: 4),
               IconButton(
                 tooltip: 'Clear history',
                 icon: const Icon(Icons.delete_outline, size: 20),
-                onPressed: logService == null ? null : () => logService.clear(),
+                onPressed: () {
+                  ref.read(eventLogsProvider.notifier).clear();
+                },
               ),
             ],
           ),
         ),
         const Divider(height: 1),
-
-        // Console Log Stream List
         Expanded(
-          child: logService == null || logService.history.isEmpty
+          child: eventLogs.isEmpty
               ? const Center(
                   child: Text(
-                    'No events recorded yet.\nPerform actions on the Modules tab or click "Fire Custom Event".',
+                    'No events recorded yet.\nPerform actions on the Modules tab or click "Fire Event".',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey),
                   ),
                 )
-              : ListenableBuilder(
-                  listenable: logService,
-                  builder: (context, _) {
-                    return ListView.separated(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: logService.history.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final entry = logService.history[index];
-                        final timeString =
-                            '${entry.timestamp.hour.toString().padLeft(2, '0')}:'
-                            '${entry.timestamp.minute.toString().padLeft(2, '0')}:'
-                            '${entry.timestamp.second.toString().padLeft(2, '0')}';
+              : ListView.separated(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: eventLogs.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final entry = eventLogs[index];
+                    final timeString =
+                        '${entry.timestamp.hour.toString().padLeft(2, '0')}:'
+                        '${entry.timestamp.minute.toString().padLeft(2, '0')}:'
+                        '${entry.timestamp.second.toString().padLeft(2, '0')}';
 
-                        return ListTile(
-                          dense: true,
-                          leading: CircleAvatar(
-                            radius: 14,
-                            backgroundColor: Colors.indigo.shade50,
-                            child: const Icon(Icons.bolt, size: 16, color: Colors.indigo),
+                    return ListTile(
+                      dense: true,
+                      leading: CircleAvatar(
+                        radius: 14,
+                        backgroundColor: Colors.indigo.shade50,
+                        child: const Icon(Icons.bolt, size: 16, color: Colors.indigo),
+                      ),
+                      title: Row(
+                        children: [
+                          Text(
+                            entry.eventName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace',
+                              fontSize: 13,
+                            ),
                           ),
-                          title: Row(
-                            children: [
-                              Text(
-                                entry.eventName,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontFamily: 'monospace',
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                timeString,
-                                style: const TextStyle(fontSize: 11, color: Colors.grey),
-                              ),
-                            ],
+                          const Spacer(),
+                          Text(
+                            timeString,
+                            style: const TextStyle(fontSize: 11, color: Colors.grey),
                           ),
-                          subtitle: Text(
-                            entry.summary,
-                            style: const TextStyle(fontSize: 12, color: Colors.black87),
-                          ),
-                        );
-                      },
+                        ],
+                      ),
+                      subtitle: Text(
+                        entry.summary,
+                        style: const TextStyle(fontSize: 12, color: Colors.black87),
+                      ),
                     );
                   },
                 ),
@@ -630,13 +637,17 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
       ],
     );
   }
+}
 
-  // ===========================================================================
-  // TAB 3: MODULE & MEMORY INSPECTOR (Auto-Dispose & Dynamic Unloading)
-  // ===========================================================================
-  Widget _buildModuleInspectorTab(BuildContext context) {
-    final bridge = context.bridge;
-    final activeModules = bridge.activeModuleNames;
+// =============================================================================
+// TAB 3: MODULE & MEMORY INSPECTOR (Auto-Dispose & Dynamic Unloading)
+// =============================================================================
+class _ModuleInspectorTab extends ConsumerWidget {
+  const _ModuleInspectorTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final activeModules = ref.watch(modulesProvider);
 
     final moduleDefinitions = [
       ('CoreModule', 'Infrastructure, ApiClient, LoggingService', () => CoreModule()),
@@ -663,8 +674,8 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
               Expanded(
                 child: Text(
                   'Dynamic Module Lifecycle & Auto-Disposal:\n'
-                  'When you unregister a module, ModularBridge instantly removes all of its '
-                  'registered singletons, factories, and EventBus subscriptions, preventing memory leaks.',
+                  'When you unregister a module, ModularBridge instantly disposes all of its '
+                  'registered dependencies and EventBus listeners to eliminate memory leaks.',
                   style: TextStyle(fontSize: 12, color: Colors.brown),
                 ),
               ),
@@ -699,11 +710,13 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                 ),
                 onPressed: () async {
                   if (isRegistered) {
-                    await bridge.unregisterModuleByName(name);
+                    await ref.read(modulesProvider.notifier).unloadModule(name);
                   } else {
-                    await bridge.registerModule(factory());
+                    await ref.read(modulesProvider.notifier).loadModule(factory());
                   }
-                  setState(() {});
+                  ref.invalidate(authProvider);
+                  ref.invalidate(cartProvider);
+                  ref.invalidate(homeFeedProvider);
                 },
                 child: Text(isRegistered ? 'Unload Module' : 'Load Module'),
               ),
@@ -713,18 +726,22 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
       ],
     );
   }
+}
 
-  // ===========================================================================
-  // TAB 4: FLAVOR & CONFIG STUDIO (Runtime Hot-Switch)
-  // ===========================================================================
-  Widget _buildConfigStudioTab(BuildContext context) {
-    final bridge = context.bridge;
-    final config = context.config;
+// =============================================================================
+// TAB 4: FLAVOR & CONFIG STUDIO (Runtime Hot-Switch via Riverpod)
+// =============================================================================
+class _ConfigStudioTab extends ConsumerWidget {
+  const _ConfigStudioTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final environment = ref.watch(environmentProvider);
+    final config = ref.watch(bridgeProvider).config;
 
     return ListView(
       padding: const EdgeInsets.all(16.0),
       children: [
-        // Environment switcher card
         Card(
           elevation: 0,
           color: Theme.of(context).colorScheme.primaryContainer.withAlpha(60),
@@ -743,8 +760,8 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Switching environments re-evaluates the config store and immediately '
-                  'notifies all dependent widgets without restarting the app.',
+                  'Driven through Riverpod EnvironmentNotifier: changing flavor updates '
+                  'all config consumers without restarting the app.',
                   style: TextStyle(fontSize: 12, color: Colors.black54),
                 ),
                 const SizedBox(height: 16),
@@ -766,28 +783,18 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                       icon: Icon(Icons.rocket_launch),
                     ),
                   ],
-                  selected: {config.environment},
+                  selected: {environment},
                   onSelectionChanged: (newSelection) {
-                    config.switchEnvironment(newSelection.first);
-                    // Reconfigure ApiClient for the new flavor
-                    bridge.unregister<ApiClient>();
-                    bridge.registerLazySingleton<ApiClient>(() {
-                      return ApiClient(
-                        baseUrl: bridge.config.getString('apiBaseUrl'),
-                        timeout: bridge.config.getDuration('apiTimeout'),
-                      );
-                    });
-                    setState(() {});
+                    ref
+                        .read(environmentProvider.notifier)
+                        .switchEnvironment(newSelection.first);
                   },
                 ),
               ],
             ),
           ),
         ),
-
         const SizedBox(height: 16),
-
-        // Active Configurations Inspection Table
         Card(
           elevation: 0,
           shape: RoundedRectangleBorder(
@@ -809,7 +816,7 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
                     IconButton(
                       tooltip: 'Add Custom Key at Runtime',
                       icon: const Icon(Icons.add_circle_outline, color: Colors.indigo),
-                      onPressed: () => _showAddKeyDialog(context),
+                      onPressed: () => _showAddKeyDialog(context, ref),
                     ),
                   ],
                 ),
@@ -844,7 +851,7 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
     );
   }
 
-  void _showAddKeyDialog(BuildContext context) {
+  void _showAddKeyDialog(BuildContext context, WidgetRef ref) {
     final keyController = TextEditingController();
     final valueController = TextEditingController();
 
@@ -873,9 +880,12 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
           ElevatedButton(
             onPressed: () {
               if (keyController.text.isNotEmpty) {
-                context.config.set(keyController.text.trim(), valueController.text.trim());
+                ref
+                    .read(bridgeProvider)
+                    .config
+                    .set(keyController.text.trim(), valueController.text.trim());
                 Navigator.pop(ctx);
-                setState(() {});
+                ref.invalidate(environmentProvider);
               }
             },
             child: const Text('Save'),

@@ -54,3 +54,4 @@ class CartService extends ChangeNotifier {
     _bridge.publish(CartClearedEvent(reason: reason));
   }
 }
+

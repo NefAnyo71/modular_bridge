@@ -1,5 +1,5 @@
 name: modular_bridge_example
-description: "Demonstration of modular_bridge framework with core, auth, and home modules."
+description: "Demonstration of modular_bridge framework with Riverpod integration."
 publish_to: "none"
 version: 1.0.0+1
 
@@ -10,6 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_riverpod: ^2.6.1
   modular_bridge:
     path: ../
 
@@ -20,4 +21,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-
