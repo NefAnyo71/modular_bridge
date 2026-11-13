@@ -87,3 +87,4 @@ class MockOverrideNotifier extends Notifier<bool> {
 /// Provider exposing the active mock override state.
 final mockOverrideProvider =
     NotifierProvider<MockOverrideNotifier, bool>(MockOverrideNotifier.new);
+

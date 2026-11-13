@@ -34,3 +34,4 @@ final eventLogsProvider =
     NotifierProvider<EventLogsNotifier, List<EventLogEntry>>(
   EventLogsNotifier.new,
 );
+

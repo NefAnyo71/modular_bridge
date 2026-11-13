@@ -70,3 +70,4 @@ class ModulesNotifier extends Notifier<List<String>> {
 final modulesProvider = NotifierProvider<ModulesNotifier, List<String>>(
   ModulesNotifier.new,
 );
+
