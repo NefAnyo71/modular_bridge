@@ -1,19 +1,22 @@
-import 'package:flutter/foundation.dart';
+import '../annotations.dart';
 
 import 'bridge_scope.dart';
 import 'dependency_descriptor.dart';
 
 /// A directed edge in the dependency graph: [from] waits on [to].
-@immutable
+@immutable()
 final class DependencyEdge {
   /// Creates a [DependencyEdge].
-  const DependencyEdge({required this.from, required this.to});
+  const DependencyEdge({required this.from, required this.to, this.toNodeId});
 
   /// The registration that declares the dependency.
   final DependencyInfo from;
 
-  /// The dependency being waited on.
+  /// The dependency key being waited on.
   final DependencyKey to;
+
+  /// Resolved target node id when the dependency is registered.
+  final String? toNodeId;
 
   @override
   String toString() => '${from.key} -> $to';
@@ -25,7 +28,7 @@ final class DependencyEdge {
 /// live scopes. [cycles] lists every dependency cycle found (each cycle is a
 /// list of node ids in resolution order); an empty list means the graph is
 /// acyclic.
-@immutable
+@immutable()
 final class BridgeDependencyGraph {
   /// Creates a [BridgeDependencyGraph].
   const BridgeDependencyGraph({
@@ -62,4 +65,34 @@ final class BridgeDependencyGraph {
   String toString() =>
       'BridgeDependencyGraph(nodes: ${nodes.length}, edges: ${edges.length}, '
       'cycles: ${cycles.length})';
+
+  /// Exports the graph in Graphviz DOT format for visualization.
+  ///
+  /// Nodes are labelled with `scope|type(name)`; edges represent `dependsOn`
+  /// relationships. Cycles are highlighted with `color=red`.
+  String toDot() {
+    final buffer = StringBuffer()
+      ..writeln('digraph modular_bridge {')
+      ..writeln('  rankdir=LR;')
+      ..writeln('  node [shape=box];');
+    final cycleNodes = <String>{
+      for (final cycle in cycles) ...cycle,
+    };
+    for (final node in nodes) {
+      final id = BridgeDependencyGraph.nodeId(node);
+      final label = node.key.name == null
+          ? '${node.key.type}${node.scopeName == null ? '' : ' @${node.scopeName}'}'
+          : '${node.key.type}(${node.key.name})'
+              '${node.scopeName == null ? '' : ' @${node.scopeName}'}';
+      final attrs = cycleNodes.contains(id) ? ', color=red, penwidth=2' : '';
+      buffer.writeln('  "$id" [label="$label"$attrs];');
+    }
+    for (final edge in edges) {
+      if (edge.toNodeId == null) continue;
+      buffer.writeln(
+          '  "${BridgeDependencyGraph.nodeId(edge.from)}" -> "${edge.toNodeId}";');
+    }
+    buffer.writeln('}');
+    return buffer.toString();
+  }
 }

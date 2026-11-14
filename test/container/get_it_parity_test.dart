@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
 import '../fixtures/test_fixtures.dart';
@@ -281,6 +281,30 @@ void main() {
       expect(bridge.get<int>(), 9);
     });
 
+    test('registerSingletonWithDependenciesAsync waits for dependsOn',
+        () async {
+      final order = <String>[];
+      bridge.registerLazySingleton<String>(() {
+        order.add('dep');
+        return 'dep-value';
+      });
+      bridge.registerSingletonWithDependenciesAsync<int>(
+        factoryFunc: (b) async {
+          order.add('main');
+          await Future<void>.delayed(Duration.zero);
+          return (await b.getAsync<String>()).length;
+        },
+        dependsOn: [DependencyKey(String)],
+      );
+
+      await bridge.allReady();
+      expect(order, ['dep', 'main']);
+      expect(await bridge.getAsync<int>(), 9);
+      // Async lifecycles reject synchronous resolution.
+      expect(() => bridge.get<int>(),
+          throwsA(isA<BridgeAsyncDependencyException>()));
+    });
+
     test('dependsOn circular orchestration is detected', () async {
       bridge.registerLazySingleton<String>(
         () => 'a',
@@ -508,6 +532,61 @@ void main() {
       );
 
       await bridge.popScope();
+    });
+  });
+
+  group('Reset disposeInstances (get_it parity)', () {
+    late ModularBridge bridge;
+
+    setUp(() {
+      bridge = ModularBridge.createIsolated();
+    });
+
+    tearDown(() async {
+      await bridge.reset();
+    });
+
+    test('reset(disposeInstances: false) drops hooks and registrations',
+        () async {
+      var disposed = 0;
+      bridge.registerSingleton<String>(
+        'x',
+        onDispose: (_) => disposed++,
+      );
+      bridge.registerLazySingleton<int>(() => 1);
+      bridge.get<int>();
+
+      await bridge.reset(disposeInstances: false);
+
+      expect(disposed, 0);
+      expect(bridge.isRegistered<String>(), isFalse);
+      expect(bridge.isRegistered<int>(), isFalse);
+    });
+
+    test('reset() defaults to disposing instances', () async {
+      var disposed = 0;
+      bridge.registerSingleton<String>(
+        'x',
+        onDispose: (_) => disposed++,
+      );
+
+      await bridge.reset();
+
+      expect(disposed, 1);
+    });
+
+    test('disposeInstances flag propagates into live scopes', () async {
+      var disposed = 0;
+      final scope = bridge.createScope(scopeName: 's');
+      scope.registerSingleton<String>(
+        'scoped',
+        onDispose: (_) => disposed++,
+      );
+
+      await bridge.reset(disposeInstances: false);
+
+      expect(disposed, 0);
+      expect(scope.isDisposed, isTrue);
     });
   });
 }

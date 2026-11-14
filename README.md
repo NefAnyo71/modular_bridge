@@ -26,6 +26,7 @@
 - [Full End-to-End Runnable Example](#-full-end-to-end-runnable-example)
 - [Error Handling (Sealed Exceptions)](#-error-handling-sealed-exceptions)
 - [API Reference Cheat Sheet](#-api-reference-cheat-sheet)
+- [Contributing](#-contributing)
 - [License](#-license)
 
 ---
@@ -40,7 +41,7 @@ In enterprise Flutter applications, as modules (`AuthModule`, `CartModule`, `Pay
 4. **Tedious Testing Setups:** Mocking a single dependency often requires instantiating an entire monolithic dependency graph or overriding global service locators.
 
 **The Modular Bridge Solution:**
-- ✅ **Zero External Dependencies:** Built entirely on top of the native Dart and Flutter framework. No transitive third-party package baggage.
+- ✅ **Zero External Dependencies:** Pure Dart core built entirely on the Dart SDK — no Flutter import, no third-party packages. Flutter widgets ship separately in `modular_bridge_flutter`.
 - ✅ **Module-Scoped Lifecycle & Automatic Disposal:** When a module is unregistered or the bridge is reset, all module-owned dependencies and event subscriptions are **automatically cancelled and disposed**.
 - ✅ **Type-Safe Environment & Hot-Switching:** Strictly typed accessors (`getString`, `getInt`, `getDuration`, etc.) with instant compile-time/runtime verification and runtime hot-switch capability.
 - ✅ **Decoupled Event Bus:** Modules communicate exclusively through strongly-typed domain events, without importing each other's internal concrete classes.
@@ -85,23 +86,35 @@ flowchart TD
 
 ## 📦 Installation
 
-Add `modular_bridge` to your `pubspec.yaml`:
+`modular_bridge` is split into two packages:
+
+- **`modular_bridge`** — pure Dart core (DI container, modules, config, event bus). Zero dependencies; runs on the Dart VM, backend, CLI, and Flutter.
+- **`modular_bridge_flutter`** — Flutter widgets and helpers (`ModularBridgeScope`, `ModularBridgeProvider`, `BuildContext` extensions, `ModularBridgeInspector`, `rootBundle` config loaders).
+
+Add both to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_bridge: ^0.5.0
+  modular_bridge: ^0.9.0
+  modular_bridge_flutter: ^0.1.0   # Flutter apps only
 ```
 
-Fetch the package:
+Fetch the packages:
 
 ```bash
-flutter pub get
+flutter pub get   # or: dart pub get for pure Dart projects
 ```
 
-Import it into your Dart codebase:
+Import the core (pure Dart — also works with `dart test`):
 
 ```dart
 import 'package:modular_bridge/modular_bridge.dart';
+```
+
+Flutter apps additionally import the widget layer:
+
+```dart
+import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 ```
 
 ---
@@ -159,6 +172,45 @@ final int retries = config.getInt('retryCount', defaultValue: 1);
 // Switch to production at runtime; all stream listeners and UI widgets rebuild instantly!
 config.switchEnvironment(BridgeEnvironment.prod);
 ```
+
+#### Loading Config from JSON
+
+In Flutter apps, `loadBridgeConfigFromAsset` (from `package:modular_bridge_flutter`) loads a JSON file bundled with the app via `rootBundle` — no manual parsing needed:
+
+```dart
+// assets/config.json:
+// {
+//   "environment": "prod",
+//   "common": { "appName": "SuperApp" },
+//   "environments": {
+//     "dev":  { "apiBaseUrl": "https://dev.api.superapp.com" },
+//     "prod": { "apiBaseUrl": "https://api.superapp.com" }
+//   }
+// }
+
+final config = await loadBridgeConfigFromAsset('assets/config.json');
+// or decode in-memory JSON: BridgeConfig.fromString(json) / BridgeConfig.fromJson(map)
+// the `environment:` parameter overrides the JSON "environment" key when provided.
+```
+
+Pure Dart callers inject their own loader into `BridgeConfig.fromAsset(path, loader: ...)`.
+
+#### Loading Config from `.env` Files
+
+`BridgeConfig.fromEnvString` / `fromEnvFile` parse dotenv files with zero dependencies (`KEY=VALUE`, `#` comments, optional quotes and `export` prefixes). The environment is taken from the `environment:` parameter or auto-detected from `BRIDGE_ENV` / `APP_ENV` / `ENVIRONMENT` keys inside the file:
+
+```dart
+// assets/.env:
+//   BRIDGE_ENV=staging
+//   API_BASE_URL=https://staging.api.example.com
+//   API_TIMEOUT_MS=15000
+
+final config = await loadBridgeConfigFromEnvAsset('assets/.env');
+final baseUrl = config.getString('API_BASE_URL');
+final timeout = config.getDuration('API_TIMEOUT_MS'); // coerced from int ms
+```
+
+Environment keys accept the same aliases as `BridgeEnvironment.fromString` (`"development"`, `"production"`, ...).
 
 ---
 
@@ -235,6 +287,26 @@ final class DataModule extends FeatureModule {
 If a module throws during dependency registration or `init`, its subscriptions
 and registered dependencies are cleaned up and the original error is rethrown.
 
+#### Module Health Checks
+
+Override `healthCheck` to verify a module's runtime prerequisites (backend
+connectivity, required config keys, ...). `bridge.checkModuleHealth()` runs it
+for every registered module and returns per-module `ModuleHealthResult`s —
+errors are captured instead of propagated:
+
+```dart
+final class ApiModule extends FeatureModule {
+  @override
+  Future<bool> healthCheck(ModularBridge bridge) async {
+    final api = bridge.tryGet<ApiClient>();
+    return api != null && await api.ping();
+  }
+}
+
+final results = await ModularBridge.I.checkModuleHealth();
+final healthy = results.every((r) => r.isHealthy);
+```
+
 #### Optional Dependencies and Module Initialization Errors
 ```dart
 final bridge = ModularBridge.I;
@@ -304,6 +376,8 @@ final class CartModule extends FeatureModule {
 ---
 
 ### 4. Flutter Widget Tree Integration (`BuildContext` Extensions)
+
+> These widgets live in `package:modular_bridge_flutter` — import it alongside the core package.
 
 Wrap your root application with `ModularBridgeProvider` to supply the container and automatically propagate runtime flavor switches down the widget tree:
 
@@ -403,7 +477,7 @@ For transient async resources use `registerFactoryAsync<T>()` — every `getAsyn
 
 #### Startup Readiness (`allReady` / `isReady`)
 
-Pass `eager: true` to `registerAsyncSingleton` to start resolution at registration time (like `get_it.registerSingletonAsync`). Eager async singletons participate in `allReady`, while lazy ones resolve on first `getAsync`:
+Pass `eager: true` to `registerAsyncSingleton` to start resolution at registration time. Eager async singletons participate in `allReady`, while lazy ones resolve on first `getAsync`:
 
 ```dart
 bridge.registerAsyncSingleton<DatabaseClient>(
@@ -445,9 +519,9 @@ final requestScope = await bridge.createScopeAsync((scope) async {
 });
 ```
 
-#### Scope Stack (`get_it` parity)
+#### Scope Stack
 
-For `get_it`-style implicit scoping, `pushNewScope` makes registrations and resolutions flow through the top scope automatically — no explicit `scope.get` calls required:
+`pushNewScope` enables implicit scoping: registrations and resolutions flow through the top scope automatically — no explicit `scope.get` calls required:
 
 ```dart
 bridge.pushNewScope(scopeName: 'request', isFinal: true, init: (b) {
@@ -462,7 +536,7 @@ await bridge.popScope(); // disposes scope-local dependencies
 
 Additional stack controls: `pushNewScopeAsync`, `popScope`, `dropScope(name)`, `popScopesTill(name)`, `currentScope`, `currentScopeName`, `activeScopeNames`, `onScopeChanged`, and `resetScope()`.
 
-Instances implementing `Disposable` (`FutureOr<void> onDispose()`) are disposed automatically when no explicit `onDispose` hook was registered — matching `get_it`'s `Disposable` support. `bridge.allowReassignment = true` globally permits re-registration without `override: true`, mirroring `get_it.allowReassignment`.
+Instances implementing `Disposable` (`FutureOr<void> onDispose()`) are disposed automatically when no explicit `onDispose` hook was registered. `bridge.allowReassignment = true` globally permits re-registration without `override: true`.
 
 #### Startup Orchestration (`signalsReady` / `dependsOn`)
 
@@ -484,19 +558,21 @@ bridge.registerSingleton<SessionService>(
 bridge.registerSingletonWithDependencies<CheckoutFlow>(
   factoryFunc: (b) => CheckoutFlow(b.get<CartService>(), b.get<PaymentGateway>()),
   dependsOn: [
-    DependencyKey(CartService),
-    DependencyKey(PaymentGateway),
+    dep<CartService>(),
+    dep<PaymentGateway>(),
   ],
 );
+// dep<T>([name]) / DependencyKey.of<T>([name]) are shorthand aliases for
+// DependencyKey(T, name); DependencyKey(CartService) remains valid too.
 
 await bridge.allReady(timeout: const Duration(seconds: 10));
 ```
 
-`registerSingletonAsync` / `registerLazySingletonAsync` are provided as `get_it` aliases for eager and lazy async singletons.
+`registerSingletonAsync` / `registerLazySingletonAsync` are provided as convenient aliases for eager and lazy async singletons.
 
 #### Parameterized Factories
 
-Factories can receive two runtime parameters, mirroring `get_it.registerFactoryParam`. Cached variants memoize per `(param1, param2)` pair:
+Factories can receive two runtime parameters via `registerFactoryParam`. Cached variants memoize per `(param1, param2)` pair:
 
 ```dart
 bridge.registerCachedFactoryParam<HttpClient, String, int>(
@@ -524,6 +600,26 @@ if (graph.hasCycles) {
 ```
 
 `registerModules` now initializes modules in dependency order (topological sort) and rejects cyclic module graphs.
+
+#### Environment-Aware Modules
+
+Gate a module to specific environments via `FeatureModule.environments` — it is skipped silently when `bridge.config.environment` is not in the list:
+
+```dart
+final class DebugModule extends FeatureModule {
+  @override
+  List<BridgeEnvironment>? get environments => [BridgeEnvironment.dev];
+
+  @override
+  void registerDependencies(ModularBridge bridge) { /* ... */ }
+}
+```
+
+#### Inspector Hooks
+
+`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them.
+
+Migrating from `get_it`? See [MIGRATION.md](MIGRATION.md) for a full cheat sheet. Run `flutter test benchmark/` for resolution throughput numbers (roughly ~1M sync `get` ops/s and ~1.5M scope-fallback ops/s on a dev machine).
 
 #### Lazy Singleton Reset
 
@@ -579,7 +675,7 @@ Copy and paste this self-contained snippet into your `main.dart` to run it immed
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:modular_bridge/modular_bridge.dart';
+import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 
 // -----------------------------------------------------------------------------
 // 1. DOMAIN EVENTS
@@ -835,22 +931,38 @@ try {
 | `bridge.get<T>()` or `bridge<T>()` | Resolves the dependency of type `T` (or throws `BridgeDependencyException`) |
 | `bridge.tryGet<T>()` | Returns `null` only when `T` is not registered; dependency creation errors propagate |
 | `bridge.registerAsyncSingleton<T>(factory, {eager})` | Registers an async singleton resolved via `getAsync<T>()`; `eager: true` starts resolution immediately |
-| `bridge.registerSingletonAsync<T>` / `registerLazySingletonAsync<T>` | `get_it` aliases for eager / lazy async singletons |
+| `bridge.registerSingletonAsync<T>` / `registerLazySingletonAsync<T>` | Eager / lazy async singleton aliases |
 | `bridge.registerFactoryAsync<T>(factory)` | Registers an async transient factory — fresh instance per `getAsync` |
 | `bridge.registerFactoryParam` / `registerCachedFactoryParam` (+`Async`) | Parameterized factories resolved via `getParam`/`getParamAsync` |
 | `bridge.getParam` / `getParamAsync` | Resolves a parameterized factory with `(param1, param2)` |
 | `bridge.getAll<T>()` / `getAllAsync<T>()` | Resolves every visible registration of a type |
-| `bridge.dependencyGraph()` | `dependsOn` graph snapshot with cycle detection |
+| `bridge.dependencyGraph()` / `.toDot()` | `dependsOn` graph snapshot with cycle detection / Graphviz export |
+| `bridge.onDependencyEvents` | Registration change stream for inspectors |
+| `bridge.metrics` / `resetMetrics()` | Per-key + per-module resolution counts, cache hits, durations |
+| `bus.totalPublished` / `bus.publishCounts` | Event bus publish counters per runtime type |
+| `bridge.warmup()` / `warmup(ownerModule:)` | Eagerly resolves singleton-style registrations (optionally per module) |
+| `bridge.enableDevTools()` | Registers `ext.modular_bridge.*` VM service extensions |
+| `bridge.lastEvent<T>()` / `history<T>()` | Event snapshot / bounded replay stream |
+| `FeatureModule.environments` | Restrict a module to specific `BridgeEnvironment`s |
 | `bridge.assertRegistered` / `assertAllReadySync` / `pendingReadinessKeys` | Test helpers (`@visibleForTesting`) |
 | `bridge.getAsync<T>()` / `tryGetAsync<T>()` | Async resolution; concurrent calls share one in-flight factory |
 | `bridge.allReady({timeout})` / `allReadySync()` | Waits for / checks all readiness-tracked registrations |
 | `bridge.isReady<T>({timeout})` / `isReadySync<T>()` | Per-dependency readiness check |
 | `bridge.signalReady(instance)` | Manually completes a `signalsReady` / `WillSignalReady` registration |
-| `bridge.registerSingletonWithDependencies<T>` | Registers a singleton gated on `dependsOn` keys |
+| `bridge.registerSingletonWithDependencies<T>` / `...Async` | Registers a singleton gated on `dependsOn` keys (sync or `FutureOr` factory) |
+| `dep<T>([name])` / `DependencyKey.of<T>([name])` | Shorthand aliases for building `dependsOn` keys |
+| `FeatureModule.healthCheck(bridge)` / `bridge.checkModuleHealth()` | Per-module health verification returning `ModuleHealthResult`s |
+| `BridgeConfig.fromAsset(path, loader:)` / `fromString` / `fromJson` | Loads configuration from JSON (loader-injected; `loadBridgeConfigFromAsset` wraps `rootBundle` in Flutter) |
+| `BridgeConfig.fromEnvString` / `fromEnvFile(path, loader:)` | Loads configuration from dotenv content/files; env auto-detected via `BRIDGE_ENV`/`APP_ENV`/`ENVIRONMENT` |
+| `ModularBridgeInspector` (`modular_bridge_flutter`) | Read-only DevTools-style widget: registrations, modules, metrics, health check, event feed |
 | `bridge.createScope()` / `createScopeAsync(init)` | Creates a `BridgeScope` (optionally with async sealed setup) |
-| `bridge.pushNewScope` / `popScope` / `dropScope` / `popScopesTill` | `get_it`-style implicit scope stack |
+| `bridge.pushNewScope` / `popScope` / `dropScope` / `popScopesTill` | Implicit scope stack |
+| `bridge.isScopeActive(name)` / `findScope(name)` | Scope stack membership / live-scope lookup |
+| `bridge.registerModule(m, checkHealth: true)` / `registerModules(ms, checkHealth: true)` | Auto-runs `healthCheck` after registration; failures reported via `bridgeErrorReporter` |
+| `bridgeErrorReporter` / `reportBridgeError` | Pluggable sink for framework-internal errors (default: `dart:developer.log`) |
 | `bridge.currentScope` / `activeScopeNames` / `onScopeChanged` | Scope stack introspection and change callback |
 | `bridge.resetScope()` / `resetLazySingleton(s)` | Clears current-scope registrations / resets lazy singletons |
+| `bridge.reset({disposeInstances})` / `scope.dispose({disposeInstances})` | Full container/scope teardown; `false` skips instance disposal hooks |
 | `bridge.registerConfigBinding<T>` | Config-key-bound dependency auto-reset on config change |
 | `bridge.diagnosticsReport()` | Structured registrations/scopes/modules/pending-async snapshot |
 | `scope.createChildScope()` | Creates a nested scope resolving child → parent → bridge |
@@ -872,6 +984,18 @@ try {
 | `config.switchEnvironment(env)` | Performs a runtime hot-switch across `dev`, `staging`, and `prod` |
 | `context.bridge` / `context.get<T>()` | Resolves container dependencies directly from `BuildContext` |
 | `context.config` | Accesses active type-safe configuration from `BuildContext` |
+
+---
+
+## 🤝 Contributing
+
+This project was developed with the assistance of AI tools under close human supervision — every change is reviewed, tested (`flutter analyze` + `flutter test`, currently 205 cases), and verified before release.
+
+Want to contribute? Issues, pull requests, docs improvements, and bug reports are welcome on GitHub:
+
+👉 **https://github.com/NefAnyo71/modular_bridge/**
+
+If you find this package useful, consider giving it a ⭐ on [pub.dev](https://pub.dev/packages/modular_bridge) or the repository.
 
 ---
 

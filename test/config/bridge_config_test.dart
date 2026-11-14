@@ -1,4 +1,6 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:convert';
+
+import 'package:test/test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
 void main() {
@@ -327,6 +329,83 @@ void main() {
         () => BridgeEnvironment.fromString('invalid_env'),
         throwsA(isA<ArgumentError>()),
       );
+    });
+  });
+
+  group('BridgeConfig JSON loaders', () {
+    const jsonDoc = '''
+    {
+      "environment": "dev",
+      "common": { "appName": "Demo", "retries": 3 },
+      "environments": {
+        "dev": { "apiUrl": "http://localhost:8080" },
+        "prod": { "apiUrl": "https://api.example.com", "appName": "DemoProd" }
+      }
+    }
+    ''';
+
+    test('fromString resolves environment, common and env values', () {
+      final c = BridgeConfig.fromString(jsonDoc);
+      addTearDown(c.dispose);
+
+      expect(c.environment, BridgeEnvironment.dev);
+      expect(c.getString('apiUrl'), 'http://localhost:8080');
+      expect(c.getString('appName'), 'Demo');
+      expect(c.getInt('retries'), 3);
+    });
+
+    test('fromJson environment parameter overrides the JSON key', () {
+      final decoded = jsonDecode(jsonDoc) as Map<String, dynamic>;
+      final c = BridgeConfig.fromJson(
+        decoded,
+        environment: BridgeEnvironment.prod,
+      );
+      addTearDown(c.dispose);
+
+      expect(c.environment, BridgeEnvironment.prod);
+      expect(c.getString('apiUrl'), 'https://api.example.com');
+      // Environment values override common values.
+      expect(c.getString('appName'), 'DemoProd');
+    });
+
+    test('environment aliases like "production" are accepted', () {
+      final c = BridgeConfig.fromString(
+        jsonDoc.replaceAll('"dev"', '"production"'),
+      );
+      addTearDown(c.dispose);
+
+      expect(c.environment, BridgeEnvironment.prod);
+      expect(c.getString('apiUrl'), 'https://api.example.com');
+    });
+
+    test('throws ArgumentError when no environment is provided', () {
+      expect(
+        () => BridgeConfig.fromString('{"common": {}}'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('throws ArgumentError for a non-object JSON root', () {
+      expect(
+        () => BridgeConfig.fromString('[1, 2, 3]'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('fromAsset uses the provided loader', () async {
+      String? loadedPath;
+      final c = await BridgeConfig.fromAsset(
+        'assets/config.json',
+        loader: (path) async {
+          loadedPath = path;
+          return jsonDoc;
+        },
+      );
+      addTearDown(c.dispose);
+
+      expect(loadedPath, 'assets/config.json');
+      expect(c.environment, BridgeEnvironment.dev);
+      expect(c.getString('apiUrl'), 'http://localhost:8080');
     });
   });
 }

@@ -1,26 +1,29 @@
 name: modular_bridge
-description: "High-performance, zero-dependency modular dependency injection, type-safe configuration, and decoupled event-bus architecture framework for Flutter."
-version: 0.6.0
+description: "Pure Dart modular DI, type-safe config, event bus, and scopes — zero dependencies. Flutter widgets in modular_bridge_flutter."
+version: 0.10.1
 homepage: https://github.com/NefAnyo71/modular_bridge
 repository: https://github.com/NefAnyo71/modular_bridge
 issue_tracker: https://github.com/NefAnyo71/modular_bridge/issues
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
-  flutter: ">=3.0.0"
 
 dependencies:
-  flutter:
-    sdk: flutter
 
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
+  test: ^1.25.0
   flutter_lints: ^6.0.0
+
+funding:
+  - https://github.com/sponsors/NefAnyo71
+
+screenshots:
+  - description: 'ModularBridge architecture: feature modules, DI container, type-safe config, event bus, and scopes.'
+    path: ModularBridgePng.png
 
 topics:
   - architecture
   - dependency-injection
+  - flutter
+  - get-it
   - modular
-  - environment
-  - zero-dependency

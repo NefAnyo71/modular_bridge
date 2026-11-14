@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
 import '../fixtures/test_fixtures.dart';
@@ -255,6 +255,20 @@ void main() {
 
       // Publish must be a safe no-op, not a crash.
       eventBus.publish(UserLoggedInEvent(userId: '1', email: 'a@b.com'));
+    });
+
+    test('tracks publish counts per event type', () {
+      expect(eventBus.totalPublished, 0);
+      expect(eventBus.publishCounts, isEmpty);
+
+      eventBus.publish(UserLoggedInEvent(userId: '1', email: 'a@b.com'));
+      eventBus.publish(UserLoggedInEvent(userId: '2', email: 'c@d.com'));
+      eventBus.publish(UserLoggedOutEvent(userId: '1'));
+
+      expect(eventBus.totalPublished, 3);
+      expect(eventBus.publishCounts[UserLoggedInEvent], 2);
+      expect(eventBus.publishCounts[UserLoggedOutEvent], 1);
+      expect(eventBus.publishCounts[OrderPlacedEvent], isNull);
     });
   });
 }

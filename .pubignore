@@ -1,0 +1,34 @@
+# Mirrors .gitignore (pub uses .pubignore INSTEAD of .gitignore when present)
+# plus package-specific exclusions.
+
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Flutter/Dart/Pub related
+/pubspec.lock
+**/pubspec.lock
+**/doc/api/
+.dart_tool/
+**/.dart_tool/
+.flutter-plugins-dependencies
+/build/
+**/build/
+/coverage/
+
+# Separate publishable package — must not ship inside modular_bridge.
+modular_bridge_flutter/

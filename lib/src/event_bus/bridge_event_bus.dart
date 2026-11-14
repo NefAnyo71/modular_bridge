@@ -1,5 +1,7 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'dart:developer' as developer;
+
+import '../core/annotations.dart';
 import 'bridge_event.dart';
 import 'bridge_subscription.dart';
 
@@ -28,7 +30,11 @@ class BridgeEventBus {
       StreamController<void>.broadcast();
   final List<BridgeSubscription> _activeSubscriptions = [];
   final Map<Type, _ReplayEntry> _lastEvents = {};
+  final List<_ReplayEntry> _eventHistory = [];
+  final Map<Type, int> _publishCounts = {};
+  static const int _maxHistory = 200;
   int _publishSequence = 0;
+  int _totalPublished = 0;
   bool _isDisposed = false;
 
   /// Whether the event bus has been disposed.
@@ -36,6 +42,13 @@ class BridgeEventBus {
 
   /// The number of currently active subscriptions.
   int get activeSubscriptionCount => _activeSubscriptions.length;
+
+  /// Total events published over the lifetime of this bus.
+  int get totalPublished => _totalPublished;
+
+  /// Per-runtime-type publish counts as an unmodifiable snapshot.
+  Map<Type, int> get publishCounts =>
+      Map<Type, int>.unmodifiable(_publishCounts);
 
   /// Whether at least one active managed subscription listens to events of
   /// type [T].
@@ -56,14 +69,22 @@ class BridgeEventBus {
   void publish<T extends BridgeEvent>(T event) {
     if (_isDisposed) {
       if (kDebugMode) {
-        debugPrint(
+        developer.log(
           '[BridgeEventBus] Attempted to publish event $event to a disposed bus.',
+          name: 'modular_bridge',
         );
       }
       return;
     }
-    _lastEvents[event.runtimeType] =
-        _ReplayEntry(event: event, sequence: ++_publishSequence);
+    _totalPublished++;
+    _publishCounts[event.runtimeType] =
+        (_publishCounts[event.runtimeType] ?? 0) + 1;
+    final entry = _ReplayEntry(event: event, sequence: ++_publishSequence);
+    _lastEvents[event.runtimeType] = entry;
+    _eventHistory.add(entry);
+    if (_eventHistory.length > _maxHistory) {
+      _eventHistory.removeAt(0);
+    }
     _eventController.add(event);
   }
 
@@ -117,6 +138,43 @@ class BridgeEventBus {
       final last = _latestMatching<T>();
       if (last != null && last.sequence <= marker) {
         controller.addSync(last.event as T);
+      }
+    });
+  }
+
+  /// Returns the most recently published event assignable to [T], or `null`
+  /// if none exists. Does not subscribe — a point-in-time snapshot.
+  T? lastEvent<T extends BridgeEvent>() => _latestMatching<T>()?.event as T?;
+
+  /// Returns a broadcast [Stream] that first replays up to the last 200
+  /// published events assignable to [T] (in publish order), then continues
+  /// with live events.
+  ///
+  /// Like [onLatest] but replays the retained history window instead of only
+  /// the single latest event. History is bounded by [_maxHistory] and cleared
+  /// by [clearReplayHistory].
+  Stream<T> history<T extends BridgeEvent>() {
+    if (_isDisposed) {
+      return const Stream.empty();
+    }
+    return Stream<T>.multi((controller) {
+      if (_isDisposed) {
+        controller.closeSync();
+        return;
+      }
+      final marker = _publishSequence;
+      final rawSub =
+          _eventController.stream.where((event) => event is T).cast<T>().listen(
+                controller.addSync,
+                onError: controller.addErrorSync,
+                onDone: controller.closeSync,
+              );
+      controller.onCancel = rawSub.cancel;
+
+      for (final entry in _eventHistory) {
+        if (entry.event is T && entry.sequence <= marker) {
+          controller.addSync(entry.event as T);
+        }
       }
     });
   }
@@ -237,6 +295,7 @@ class BridgeEventBus {
   /// a replay until the next matching publish.
   void clearReplayHistory() {
     _lastEvents.clear();
+    _eventHistory.clear();
   }
 
   /// Completely disposes the event bus, canceling all subscriptions and closing the stream.

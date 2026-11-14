@@ -1,6 +1,52 @@
+## 0.10.1
+
+* Shortened `pubspec.yaml` description to fit pub.dev search-result limits (60–180 chars). No code changes.
+
+## 0.10.0
+
+* Documentation pass: removed comparative-framework wording from the changelog, README, and API docs; fixed doc comments. No API or behavioral changes since 0.9.0.
+* `modular_bridge_flutter/` (companion Flutter package) is now excluded from this package's published archive via `.pubignore`.
+
+## 0.9.0
+
+* **Pure Dart core**: `modular_bridge` no longer depends on the Flutter SDK — every `package:flutter/*` import was removed from `lib/`. The package now runs on the Dart VM, in backend services, CLI tools, and under `dart test` with zero dependencies.
+* **Package split**: Flutter widgets moved to the companion package `modular_bridge_flutter` (`ModularBridgeScope`, `ModularBridgeProvider`, `BuildContext` extensions). It re-exports the core, so `import 'package:modular_bridge_flutter/modular_bridge_flutter.dart'` covers both.
+* **`BridgeErrorReporter`**: `FlutterError.reportError` replaced by a pluggable `bridgeErrorReporter` (default: `dart:developer.log`) with `BridgeErrorReport`/`reportBridgeError` — route framework errors to any crash reporter.
+* **dotenv config**: `BridgeConfig.fromEnvString`/`fromEnvFile(path, loader:)` parse `.env` files (comments, quotes, `export` prefix) with zero dependencies; environment auto-resolves from `BRIDGE_ENV`/`APP_ENV`/`ENVIRONMENT` keys or the `environment:` parameter.
+* **`BridgeConfig.fromAsset` is now loader-required**: the core has no `rootBundle`; Flutter apps use `loadBridgeConfigFromAsset`/`loadBridgeConfigFromEnvAsset` from `modular_bridge_flutter`.
+* **`ModularBridgeInspector`** (`modular_bridge_flutter`): read-only DevTools-style widget showing registrations, modules, scopes, resolution metrics, health-check action, and a live dependency-event feed.
+* **`isScopeActive(name)`**: scope-stack membership query alongside `findScope`.
+* **`registerModule(s, checkHealth: true)`**: optional auto-run of `FeatureModule.healthCheck` after registration; unhealthy results are reported via `bridgeErrorReporter` without failing registration.
+* Internal: `@immutable`/`@visibleForTesting`/`@mustCallSuper` now come from a Flutter-free `annotations.dart` (use the `@annotation()` form — bare names are rejected by recent analyzers).
+
+## 0.8.0
+
+* **`BridgeConfig` JSON loaders**: `BridgeConfig.fromAsset(path)` loads a bundled JSON config via `rootBundle` (injectable `loader` for tests); `fromString`/`fromJson` decode in-memory documents with `common` + per-`environments` maps and `environment` resolution/override.
+* **Module health checks**: `FeatureModule.healthCheck(bridge)` hook (`FutureOr<bool>`, default healthy) plus `bridge.checkModuleHealth()` returning per-module `ModuleHealthResult`s with captured errors.
+* **`dependsOn` aliases**: `dep<T>([name])` and `DependencyKey.of<T>([name])` shorthand for building dependency keys in `dependsOn` lists.
+* **`registerSingletonWithDependenciesAsync`**: async variant of `registerSingletonWithDependencies` on both `ModularBridge` and `BridgeScope` — `factoryFunc` may return a `FutureOr<T>` and runs only after all `dependsOn` keys resolve.
+* **`reset(disposeInstances:)`**: `ModularBridge.reset` and `BridgeScope.dispose` now accept `disposeInstances: false` to drop registrations without running cached instances or `onDispose` hooks.
+* **`warmup(ownerModule:)`**: optionally restrict warmup to dependencies owned by a single `FeatureModule.name`.
+* **Module-scoped metrics**: `DependencyMetrics.moduleEntries` aggregates resolutions/cache-hits/failures per owning module; included in `metrics.snapshot()['byModule']`.
+* **Event bus metrics**: `BridgeEventBus.totalPublished` and `publishCounts` (per runtime type); surfaced in the `ext.modular_bridge.state` DevTools payload.
+
+## 0.7.0
+
+* **Resolution metrics**: `bridge.metrics` (`DependencyMetrics`) records per-key resolution counts, cache hits, failures, and durations across sync/async/parameterized factories and scopes; included in `diagnosticsReport()` and resettable via `resetMetrics()`.
+* **`warmup()`**: eagerly resolves every singleton-style registration (root + live scopes) at startup; transient and parameterized factories are skipped.
+* **DevTools service extensions**: `bridge.enableDevTools()` registers `ext.modular_bridge.state`, `ext.modular_bridge.graph`, and `ext.modular_bridge.metrics` VM service extensions for live container inspection.
+* **Event bus extras**: `lastEvent<T>()` point-in-time snapshot and `history<T>()` replay stream (bounded 200-event window, sequence-guarded like `onLatest`).
+* **`ShadowChangeHandlers`**: instances implementing the new interface are notified via `onGetShadowed`/`onLeaveShadow` when a scope-level registration shadows (or stops shadowing) them.
+* **`onDependencyEvents`**: broadcast stream of `DependencyRegistrationEvent`s (`registered`/`unregistered`) across the root registry and every live scope — foundation for DevTools-style inspectors.
+* **`BridgeDependencyGraph.toDot()`**: Graphviz DOT export of the `dependsOn` graph with cycle highlighting.
+* **Environment-aware modules**: `FeatureModule.environments` restricts a module to specific `BridgeEnvironment`s; `registerModule` skips it silently outside the allow-list. Note: dependent modules must also be gated or they will fail their dependency check.
+* **Edge-case hardening**: `popScopesTill(inclusive: false)`, `dropScope` mid-stack semantics, `signalReady` scope→root fallback, and pending `allReady` waiters completing on `reset` are now covered by regression tests.
+* **Benchmark**: `benchmark/di_benchmark_test.dart` measures sync/async/scope-fallback resolution throughput (run `flutter test benchmark/`).
+* **Docs**: added `MIGRATION.md` (migration cheat sheet) and CI now uploads `flutter test --coverage` artifacts.
+
 ## 0.6.0
 
-* **Parameterized factories**: `registerFactoryParam`, `registerCachedFactoryParam`, `registerFactoryParamAsync`, `registerCachedFactoryParamAsync` + `getParam`/`getParamAsync` — `get_it` parity for parameterized resolutions, with per-`(param1, param2)` caching for the cached variants. Works inside scopes.
+* **Parameterized factories**: `registerFactoryParam`, `registerCachedFactoryParam`, `registerFactoryParamAsync`, `registerCachedFactoryParamAsync` + `getParam`/`getParamAsync` — parameterized resolutions with per-`(param1, param2)` caching for the cached variants. Works inside scopes.
 * **`getAll`/`getAllAsync`**: resolve every registration of a type (including named instances) visible from the current scope chain, nearest scope first.
 * **`dependencyGraph()`**: returns a `BridgeDependencyGraph` with all `dependsOn` edges across root + live scopes and iterative cycle detection (`hasCycles`, `cycles`).
 * **`BridgeWaitingTimeOutException`**: `allReady`/`isReady` timeouts now carry structured `pending`/`ready` registration lists (replaces plain `TimeoutException`; still a `TimeoutException` subclass).
@@ -9,10 +55,10 @@
 
 ## 0.5.0
 
-* **`get_it` parity — scope stack**: `pushNewScope`, `pushNewScopeAsync`, `popScope`, `dropScope(name)`, `popScopesTill(name)`, `currentScope`, `activeScopeNames`, `onScopeChanged`, and `resetScope()`. While a scope is pushed, `bridge.register*`/`get*` route through the scope chain automatically; explicit `BridgeScope` hierarchies remain supported.
-* **`get_it` parity — startup orchestration**: `signalsReady` registration flag, `WillSignalReady` marker interface, `signalReady(instance)`, `registerSingletonWithDependencies` with `dependsOn` keys (circular orchestration is detected), `onCreated` callbacks, and `registerSingletonAsync`/`registerLazySingletonAsync` aliases.
-* **`get_it` parity — resets**: `resetLazySingleton`, `resetLazySingletons`, `resetScope(disposeInstances:)` on both bridge and scopes.
-* **`get_it` parity — misc**: `Disposable` interface (auto `onDispose` when no explicit hook), `allowReassignment` flag, `currentScopeName`, `scope.name` alias, and `unregister` now falls back to the root registry when the active scope does not own the key.
+* **Scope stack**: `pushNewScope`, `pushNewScopeAsync`, `popScope`, `dropScope(name)`, `popScopesTill(name)`, `currentScope`, `activeScopeNames`, `onScopeChanged`, and `resetScope()`. While a scope is pushed, `bridge.register*`/`get*` route through the scope chain automatically; explicit `BridgeScope` hierarchies remain supported.
+* **Startup orchestration**: `signalsReady` registration flag, `WillSignalReady` marker interface, `signalReady(instance)`, `registerSingletonWithDependencies` with `dependsOn` keys (circular orchestration is detected), `onCreated` callbacks, and `registerSingletonAsync`/`registerLazySingletonAsync` aliases.
+* **Resets**: `resetLazySingleton`, `resetLazySingletons`, `resetScope(disposeInstances:)` on both bridge and scopes.
+* **Lifecycle & misc**: `Disposable` interface (auto `onDispose` when no explicit hook), `allowReassignment` flag, `currentScopeName`, `scope.name` alias, and `unregister` now falls back to the root registry when the active scope does not own the key.
 * **Config-aware DI**: `registerConfigBinding` re-decodes a `BridgeConfig` key into a DI registration and auto-resets it on every effective config change.
 * **Diagnostics**: `diagnosticsReport()` returns a structured `BridgeDiagnosticsReport` (registrations with lifecycle/owner/scope/readiness metadata, module names, live scopes, scope stack, pending async resolutions, leak issues); `DependencyInfo` snapshots are exposed per scope and on the bridge.
 * **Async module registration**: `FeatureModule.registerDependencies` is now `FutureOr<void>` — modules can `await` asynchronous setup before `init` runs. Dependency ownership is tracked through an async-local zone context, so registrations made after `await` points (and during parallel `registerModule` calls) are always attributed to the correct module — including when a scope is active.

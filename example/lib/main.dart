@@ -1,7 +1,14 @@
-// ignore_for_file: deprecated_member_use
-import 'package:flutter/material.dart';
+//
+// ⚠️ WARNING:
+// This example uses Riverpod for state management. For large, real-world
+// projects we strongly recommend pairing ModularBridge with a dedicated
+// state management package (Riverpod, Bloc, Provider, etc.). ModularBridge
+// only provides DI, modules, config, and the event bus — it is NOT a state
+// manager. Using it without one forces manual widget rebuild/state
+// synchronization, which can severely hurt app performance.
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:modular_bridge/modular_bridge.dart';
+import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 
 import 'analytics/analytics_module.dart';
 import 'analytics/analytics_providers.dart';
@@ -14,8 +21,18 @@ import 'core/core_providers.dart';
 import 'home/home_module.dart';
 import 'home/home_providers.dart';
 
-/// Riverpod StateProvider tracking the active bottom navigation tab index.
-final selectedTabProvider = StateProvider<int>((ref) => 0);
+/// Riverpod [Notifier] tracking the active bottom navigation tab index.
+class SelectedTabNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  /// Switches the active tab.
+  void select(int index) => state = index;
+}
+
+/// Provider for the active bottom navigation tab index.
+final selectedTabProvider =
+    NotifierProvider<SelectedTabNotifier, int>(SelectedTabNotifier.new);
 
 /// Builds a fresh list of all feature modules in dependency-safe order.
 List<FeatureModule> buildFeatureModules() => [
@@ -29,33 +46,13 @@ List<FeatureModule> buildFeatureModules() => [
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize Type-Safe Configuration for multiple flavors/environments
-  final config = BridgeConfig(
+  // 1. Initialize Type-Safe Configuration from a bundled JSON asset.
+  //    assets/config.json holds `common` + per-environment maps; the
+  //    `environment:` parameter overrides the JSON "environment" key.
+  //    apiTimeout is stored as integer milliseconds (getDuration coerces).
+  final config = await loadBridgeConfigFromAsset(
+    'assets/config.json',
     environment: BridgeEnvironment.dev,
-    commonValues: {
-      'appName': 'ModularBridge Riverpod Showcase',
-      'version': '0.2.0',
-    },
-    environmentValues: {
-      BridgeEnvironment.dev: {
-        'apiBaseUrl': 'https://dev.api.modularbridge.io',
-        'apiTimeout': const Duration(seconds: 15),
-        'enableBiometrics': false,
-        'retryCount': 3,
-      },
-      BridgeEnvironment.staging: {
-        'apiBaseUrl': 'https://staging.api.modularbridge.io',
-        'apiTimeout': const Duration(seconds: 10),
-        'enableBiometrics': true,
-        'retryCount': 2,
-      },
-      BridgeEnvironment.prod: {
-        'apiBaseUrl': 'https://api.modularbridge.io',
-        'apiTimeout': const Duration(seconds: 5),
-        'enableBiometrics': true,
-        'retryCount': 1,
-      },
-    },
   );
 
   ModularBridge.I.setConfig(config);
@@ -216,7 +213,7 @@ class ShowcaseScreen extends ConsumerWidget {
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedTab,
         onDestinationSelected: (index) {
-          ref.read(selectedTabProvider.notifier).state = index;
+          ref.read(selectedTabProvider.notifier).select(index);
         },
         destinations: const [
           NavigationDestination(
@@ -570,6 +567,7 @@ class _EventConsoleTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final eventLogs = ref.watch(eventLogsProvider);
+    final totalPublished = ref.watch(bridgeProvider).eventBus.totalPublished;
 
     return Column(
       children: [
@@ -582,7 +580,8 @@ class _EventConsoleTab extends ConsumerWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Event Bus Stream (${eventLogs.length})',
+                  'Event Bus Stream (${eventLogs.length} shown • '
+                  '$totalPublished published)',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -677,6 +676,9 @@ class _ModuleInspectorTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final activeModules = ref.watch(modulesProvider);
+    final bridge = ref.watch(bridgeProvider);
+    final metrics = bridge.metrics;
+    final hitRatio = (metrics.cacheHitRatio * 100).toStringAsFixed(1);
 
     final moduleDefinitions = [
       (
@@ -728,6 +730,91 @@ class _ModuleInspectorTab extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 16),
+
+        // Diagnostics card: live resolution metrics + module health check
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.monitor_heart_outlined,
+                            color: Colors.indigo),
+                        SizedBox(width: 8),
+                        Text(
+                          'Bridge Diagnostics',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ],
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.favorite, size: 16),
+                      label: const Text('Health Check'),
+                      onPressed: () => _runHealthCheck(context, ref),
+                    ),
+                  ],
+                ),
+                const Divider(height: 20),
+                Wrap(
+                  spacing: 16,
+                  runSpacing: 8,
+                  children: [
+                    _MetricChip(
+                        label: 'Resolutions',
+                        value: '${metrics.totalResolutions}'),
+                    _MetricChip(
+                        label: 'Cache Hits',
+                        value: '${metrics.totalCacheHits}'),
+                    _MetricChip(
+                        label: 'Failures', value: '${metrics.totalFailures}'),
+                    _MetricChip(label: 'Hit Ratio', value: '$hitRatio%'),
+                  ],
+                ),
+                if (metrics.moduleEntries.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text('Per-module resolutions:',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  ...metrics.moduleEntries.entries.map(
+                    (e) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(e.key,
+                              style: const TextStyle(
+                                  fontSize: 12, fontFamily: 'monospace')),
+                          Text(
+                            '${e.value.resolutions} resolutions • '
+                            '${e.value.cacheHits} hits • '
+                            '${e.value.failures} failures',
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
         ...moduleDefinitions.map((def) {
           final (name, description, factory) = def;
           final isRegistered = activeModules.contains(name);
@@ -785,6 +872,80 @@ class _ModuleInspectorTab extends ConsumerWidget {
             ),
           );
         }),
+      ],
+    );
+  }
+
+  Future<void> _runHealthCheck(BuildContext context, WidgetRef ref) async {
+    final bridge = ref.read(bridgeProvider);
+    final results = await bridge.checkModuleHealth();
+    if (!context.mounted) return;
+
+    final allHealthy = results.every((r) => r.isHealthy);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              allHealthy ? Icons.check_circle : Icons.error,
+              color: allHealthy ? Colors.green : Colors.red,
+            ),
+            const SizedBox(width: 8),
+            const Text('Module Health Check'),
+          ],
+        ),
+        content: results.isEmpty
+            ? const Text('No modules are currently registered.')
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final r in results)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        r.isHealthy
+                            ? Icons.check_circle_outline
+                            : Icons.cancel_outlined,
+                        color: r.isHealthy ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
+                      title: Text(r.moduleName,
+                          style: const TextStyle(fontSize: 14)),
+                      subtitle: r.error != null
+                          ? Text('$r.error',
+                              style: const TextStyle(fontSize: 12))
+                          : null,
+                    ),
+                ],
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small label/value chip used by the Bridge Diagnostics card.
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        Text(value,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
       ],
     );
   }

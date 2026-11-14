@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import '../annotations.dart';
 
 /// Base sealed exception class for all errors thrown by `modular_bridge`.
 ///
 /// By using a sealed hierarchy, callers can exhaustively pattern-match
 /// against all possible framework error conditions.
-@immutable
+@immutable()
 sealed class BridgeException implements Exception {
   /// Creates a [BridgeException] with a descriptive [message].
   const BridgeException(this.message);
@@ -148,8 +148,7 @@ final class BridgeConfigTypeMismatchException extends BridgeConfigException {
 /// timeout while dependencies are still pending.
 ///
 /// Carries structured details about which registrations were still pending
-/// and which had already become ready, mirroring `get_it`'s
-/// `WaitingTimeOutException`.
+/// and which had already become ready.
 final class BridgeWaitingTimeOutException extends TimeoutException {
   /// Creates a [BridgeWaitingTimeOutException].
   BridgeWaitingTimeOutException({

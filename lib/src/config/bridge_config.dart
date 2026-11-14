@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+
 import '../core/exceptions/bridge_exceptions.dart';
 import 'bridge_environment.dart';
+import 'env_file.dart';
 
 /// Manages type-safe application configurations and environment flavors.
 ///
@@ -21,6 +24,167 @@ class BridgeConfig {
             entry.key: Map<String, dynamic>.from(entry.value),
         } {
     _rebuildActiveConfig();
+  }
+
+  /// Creates a [BridgeConfig] from a decoded JSON object.
+  ///
+  /// Expected shape:
+  /// ```json
+  /// {
+  ///   "environment": "prod",
+  ///   "common": { "apiBaseUrl": "https://api.example.com" },
+  ///   "environments": {
+  ///     "dev":     { "apiBaseUrl": "http://localhost:8080" },
+  ///     "staging": { "apiBaseUrl": "https://staging.example.com" },
+  ///     "prod":    { "apiBaseUrl": "https://api.example.com" }
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// The active environment is resolved from [environment] first, then from
+  /// the JSON `"environment"` key (parsed via
+  /// [BridgeEnvironment.fromString]). An [ArgumentError] is thrown when
+  /// neither provides a valid environment. Environment keys inside
+  /// `"environments"` accept the same aliases as [BridgeEnvironment.fromString]
+  /// (e.g. `"development"`, `"production"`).
+  factory BridgeConfig.fromJson(
+    Map<String, dynamic> json, {
+    BridgeEnvironment? environment,
+  }) {
+    final env = environment ?? _environmentFromJson(json['environment']);
+
+    var commonValues = const <String, dynamic>{};
+    final commonRaw = json['common'];
+    if (commonRaw != null) {
+      commonValues = _stringMap(commonRaw, 'common');
+    }
+
+    var environmentValues = const <BridgeEnvironment, Map<String, dynamic>>{};
+    final environmentsRaw = json['environments'];
+    if (environmentsRaw != null) {
+      if (environmentsRaw is! Map) {
+        throw ArgumentError.value(
+          environmentsRaw,
+          'environments',
+          'Expected a JSON object keyed by environment name.',
+        );
+      }
+      environmentValues = {
+        for (final entry in environmentsRaw.entries)
+          BridgeEnvironment.fromString(entry.key.toString()):
+              _stringMap(entry.value, 'environments.${entry.key}'),
+      };
+    }
+
+    return BridgeConfig(
+      environment: env,
+      commonValues: commonValues,
+      environmentValues: environmentValues,
+    );
+  }
+
+  /// Creates a [BridgeConfig] by decoding a JSON string. See [fromJson] for
+  /// the expected document shape.
+  factory BridgeConfig.fromString(
+    String source, {
+    BridgeEnvironment? environment,
+  }) {
+    final decoded = jsonDecode(source);
+    if (decoded is! Map) {
+      throw ArgumentError.value(
+        decoded,
+        'source',
+        'Expected a JSON object at the document root.',
+      );
+    }
+    return BridgeConfig.fromJson(
+      _stringMap(decoded, 'root'),
+      environment: environment,
+    );
+  }
+
+  /// Loads a [BridgeConfig] from a JSON document supplied by [loader].
+  ///
+  /// This package is pure Dart and has no asset bundle, so the caller must
+  /// provide [loader] — e.g. `rootBundle.loadString` in Flutter apps (see
+  /// `package:modular_bridge_flutter` for a ready-made helper), or a file
+  /// read in CLI/backend tools:
+  ///
+  /// ```dart
+  /// final config = await BridgeConfig.fromAsset(
+  ///   'assets/config.json',
+  ///   loader: (path) => File(path).readAsString(),
+  /// );
+  /// ```
+  ///
+  /// See [fromJson] for the expected document shape and for how the active
+  /// environment is resolved.
+  static Future<BridgeConfig> fromAsset(
+    String assetPath, {
+    required Future<String> Function(String path) loader,
+    BridgeEnvironment? environment,
+  }) async {
+    return BridgeConfig.fromString(
+      await loader(assetPath),
+      environment: environment,
+    );
+  }
+
+  /// Environment variable names inspected, in order, when [environment] is
+  /// not passed explicitly to [fromEnvString] / [fromEnvFile].
+  static const List<String> envEnvironmentKeys = <String>[
+    'BRIDGE_ENV',
+    'APP_ENV',
+    'ENVIRONMENT',
+  ];
+
+  /// Creates a [BridgeConfig] from dotenv (`.env`) file content.
+  ///
+  /// Every `KEY=VALUE` pair becomes a configuration value (all values are
+  /// [String]s; use [getInt]/[getBool]/[getDuration] for coercion).
+  /// Lines starting with `#`, blank lines, `export ` prefixes, and quoted
+  /// values are supported — see [parseEnvFile].
+  ///
+  /// The active environment is resolved from [environment] first, then by
+  /// scanning [environmentKeys] (defaults to [envEnvironmentKeys]) inside
+  /// the parsed content. An [ArgumentError] is thrown when neither yields a
+  /// valid [BridgeEnvironment].
+  factory BridgeConfig.fromEnvString(
+    String source, {
+    BridgeEnvironment? environment,
+    List<String> environmentKeys = envEnvironmentKeys,
+  }) {
+    final values = parseEnvFile(source);
+    final env = environment ??
+        _environmentFromEnv(values, environmentKeys, sourceName: 'source');
+    return BridgeConfig(
+      environment: env,
+      commonValues: values,
+    );
+  }
+
+  /// Loads a [BridgeConfig] from a dotenv file supplied by [loader].
+  ///
+  /// See [fromEnvString] for parsing rules and environment resolution.
+  /// Example for Flutter apps:
+  ///
+  /// ```dart
+  /// final config = await BridgeConfig.fromEnvFile(
+  ///   'assets/.env',
+  ///   loader: rootBundle.loadString,
+  /// );
+  /// ```
+  static Future<BridgeConfig> fromEnvFile(
+    String path, {
+    required Future<String> Function(String path) loader,
+    BridgeEnvironment? environment,
+    List<String> environmentKeys = envEnvironmentKeys,
+  }) async {
+    return BridgeConfig.fromEnvString(
+      await loader(path),
+      environment: environment,
+      environmentKeys: environmentKeys,
+    );
   }
 
   BridgeEnvironment _environment;
@@ -365,4 +529,53 @@ class BridgeConfig {
     _envStreamController.close();
     _changeController.close();
   }
+}
+
+BridgeEnvironment _environmentFromJson(dynamic value) {
+  if (value == null) {
+    throw ArgumentError.value(
+      value,
+      'environment',
+      'No environment provided. Pass `environment:` or include an '
+          '"environment" key in the JSON document.',
+    );
+  }
+  if (value is BridgeEnvironment) return value;
+  if (value is String) return BridgeEnvironment.fromString(value);
+  throw ArgumentError.value(
+    value,
+    'environment',
+    'Expected a BridgeEnvironment or an environment name string.',
+  );
+}
+
+BridgeEnvironment _environmentFromEnv(
+  Map<String, String> values,
+  List<String> keys, {
+  required String sourceName,
+}) {
+  for (final key in keys) {
+    final raw = values[key];
+    if (raw == null || raw.trim().isEmpty) continue;
+    return BridgeEnvironment.fromString(raw.trim());
+  }
+  throw ArgumentError.value(
+    null,
+    'environment',
+    'No environment provided. Pass `environment:` or include one of '
+        '${keys.join(', ')} in the $sourceName.',
+  );
+}
+
+Map<String, dynamic> _stringMap(dynamic value, String path) {
+  if (value is! Map) {
+    throw ArgumentError.value(
+      value,
+      path,
+      'Expected a JSON object.',
+    );
+  }
+  return <String, dynamic>{
+    for (final entry in value.entries) entry.key.toString(): entry.value,
+  };
 }

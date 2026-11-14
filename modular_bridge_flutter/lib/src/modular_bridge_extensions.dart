@@ -1,7 +1,6 @@
 import 'package:flutter/widgets.dart';
-import '../config/bridge_config.dart';
-import '../core/container/modular_bridge_container.dart';
-import '../event_bus/bridge_event.dart';
+import 'package:modular_bridge/modular_bridge.dart';
+
 import 'modular_bridge_scope.dart';
 
 /// Ergonomic Flutter [BuildContext] extensions for interacting with [ModularBridge].

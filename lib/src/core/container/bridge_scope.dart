@@ -1,9 +1,10 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
+import '../annotations.dart';
+import '../errors/bridge_error_reporter.dart';
 import '../exceptions/bridge_exceptions.dart';
 import 'dependency_descriptor.dart';
+import 'dependency_event.dart';
 import 'modular_bridge_container.dart';
 import 'resolution_context.dart';
 
@@ -54,6 +55,7 @@ final class BridgeScope {
   final BridgeScope? _parent;
   final List<BridgeScope> _children = [];
   final Map<DependencyKey, DependencyDescriptor<dynamic>> _registry = {};
+  final Set<DependencyKey> _shadowNotified = {};
   int _registrationCounter = 0;
   bool _isDisposed = false;
   bool _isFinal = false;
@@ -126,7 +128,7 @@ final class BridgeScope {
       }
       unawaited(existing.dispose());
     }
-    _registry[key] = DependencyDescriptor<T>(
+    final descriptor = DependencyDescriptor<T>(
       key: key,
       lifecycle: lifecycle,
       registrationIndex: _registrationCounter++,
@@ -143,7 +145,10 @@ final class BridgeScope {
       paramFactory: paramFactory,
       paramAsyncFactory: paramAsyncFactory,
       paramCached: paramCached,
+      metrics: bridge.metrics,
     );
+    _registry[key] = descriptor;
+    bridge.notifyDependencyEvent(DependencyChangeKind.registered, descriptor);
   }
 
   /// Registers an existing [instance] as an eager singleton within this scope.
@@ -193,8 +198,7 @@ final class BridgeScope {
   /// dependencies are ready.
   ///
   /// The factory receives this scope so it can resolve dependencies with the
-  /// correct hierarchy. Resolution is triggered immediately, matching
-  /// `get_it.registerSingletonWithDependencies`.
+  /// correct hierarchy. Resolution is triggered immediately.
   void registerSingletonWithDependencies<T extends Object>({
     required T Function(BridgeScope scope) factoryFunc,
     required Iterable<DependencyKey> dependsOn,
@@ -209,6 +213,41 @@ final class BridgeScope {
       instanceName: instanceName,
       override: override,
       onDispose: onDispose,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+    );
+    final key = DependencyKey(T, instanceName);
+    final descriptor = _registry[key];
+    final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
+    descriptor?.pendingResult = pending;
+    unawaited(pending.whenComplete(() {
+      if (identical(descriptor?.pendingResult, pending)) {
+        descriptor?.pendingResult = null;
+      }
+    }));
+  }
+
+  /// Async variant of [registerSingletonWithDependencies].
+  ///
+  /// [factoryFunc] receives this scope and may return a value or a [Future];
+  /// it runs only after every [dependsOn] key has resolved. Resolve the
+  /// registration with [getAsync].
+  void registerSingletonWithDependenciesAsync<T extends Object>({
+    required FutureOr<T> Function(BridgeScope scope) factoryFunc,
+    required Iterable<DependencyKey> dependsOn,
+    String? instanceName,
+    bool override = false,
+    bool signalsReady = false,
+    void Function(T instance)? onDispose,
+    void Function(T instance)? onCreated,
+  }) {
+    registerAsyncSingleton<T>(
+      () async => await factoryFunc(this),
+      instanceName: instanceName,
+      override: override,
+      onDispose: onDispose,
+      eager: false,
       signalsReady: signalsReady,
       dependsOn: dependsOn,
       onCreated: onCreated,
@@ -271,8 +310,7 @@ final class BridgeScope {
 
   /// Registers a lazy asynchronous singleton within this scope.
   ///
-  /// Alias for [registerAsyncSingleton] with `eager: false`, mirroring
-  /// `get_it.registerLazySingletonAsync`.
+  /// Alias for [registerAsyncSingleton] with `eager: false`.
   void registerLazySingletonAsync<T extends Object>(
     Future<T> Function() factory, {
     String? instanceName,
@@ -296,8 +334,7 @@ final class BridgeScope {
 
   /// Registers an eager asynchronous singleton within this scope.
   ///
-  /// Alias for [registerAsyncSingleton] with `eager: true`, mirroring
-  /// `get_it.registerSingletonAsync`.
+  /// Alias for [registerAsyncSingleton] with `eager: true`.
   void registerSingletonAsync<T extends Object>(
     Future<T> Function() factory, {
     String? instanceName,
@@ -340,7 +377,7 @@ final class BridgeScope {
   }
 
   /// Registers a transient factory that receives two parameters at
-  /// resolution time, mirroring `get_it.registerFactoryParam`.
+  /// resolution time.
   ///
   /// Resolve with [getParam]; parameters are not part of the registration
   /// key, so multiple parameter combinations share one registration.
@@ -365,7 +402,7 @@ final class BridgeScope {
   }
 
   /// Registers a parameterized factory whose results are cached per
-  /// `(param1, param2)` pair, mirroring `get_it.registerCachedFactoryParam`.
+  /// `(param1, param2)` pair.
   void registerCachedFactoryParam<T extends Object, P1, P2>(
     T Function(P1 param1, P2 param2) factory, {
     String? instanceName,
@@ -556,7 +593,12 @@ final class BridgeScope {
         .map((entry) => entry.key)
         .toList();
     for (final key in keys) {
-      await _registry.remove(key)?.dispose();
+      final descriptor = _registry.remove(key);
+      if (descriptor != null) {
+        bridge.notifyDependencyEvent(
+            DependencyChangeKind.unregistered, descriptor);
+        await descriptor.dispose();
+      }
     }
   }
 
@@ -645,7 +687,9 @@ final class BridgeScope {
       return bridge.getFromRoot<T>(instanceName: instanceName);
     }
 
-    return _resolveDescriptorSync(descriptor) as T;
+    final instance = _resolveDescriptorSync(descriptor) as T;
+    _notifyShadowed(key, instance);
+    return instance;
   }
 
   /// Asynchronously resolves an instance of type [T] from this scope,
@@ -666,7 +710,11 @@ final class BridgeScope {
       return bridge.getAsyncFromRoot<T>(instanceName: instanceName);
     }
 
-    return _resolveDescriptorAsync(descriptor).then((value) => value as T);
+    return _resolveDescriptorAsync(descriptor).then((value) {
+      final instance = value as T;
+      _notifyShadowed(key, instance);
+      return instance;
+    });
   }
 
   /// Resolves every registration of type [T] visible from this scope —
@@ -781,6 +829,54 @@ final class BridgeScope {
     return ready;
   }
 
+  /// Finds the nearest registration below this scope for [key], used by
+  /// [ShadowChangeHandlers] notifications.
+  DependencyDescriptor<dynamic>? _findShadowedDescriptor(DependencyKey key) {
+    var scope = _parent;
+    while (scope != null) {
+      final descriptor = scope._localDescriptor(key);
+      if (descriptor != null) return descriptor;
+      scope = scope._parent;
+    }
+    return bridge.findDescriptorFromRoot(key);
+  }
+
+  void _notifyShadowed(DependencyKey key, Object? instance) {
+    if (instance == null || _shadowNotified.contains(key)) return;
+    final target = _findShadowedDescriptor(key)?.cachedInstance;
+    if (target is ShadowChangeHandlers) {
+      _shadowNotified.add(key);
+      try {
+        target.onGetShadowed(instance);
+      } catch (error, stackTrace) {
+        reportBridgeError(
+          error,
+          stackTrace,
+          context: 'While running ShadowChangeHandlers.onGetShadowed',
+        );
+      }
+    }
+  }
+
+  void _releaseShadowNotifications() {
+    for (final key in _shadowNotified.toList()) {
+      final shadowed = _findShadowedDescriptor(key)?.cachedInstance;
+      final instance = _registry[key]?.cachedInstance;
+      if (shadowed is ShadowChangeHandlers && instance != null) {
+        try {
+          shadowed.onLeaveShadow(instance);
+        } catch (error, stackTrace) {
+          reportBridgeError(
+            error,
+            stackTrace,
+            context: 'While running ShadowChangeHandlers.onLeaveShadow',
+          );
+        }
+      }
+    }
+    _shadowNotified.clear();
+  }
+
   DependencyDescriptor<dynamic>? _findDescriptor(DependencyKey key) {
     var scope = this;
     while (true) {
@@ -841,10 +937,13 @@ final class BridgeScope {
   /// dropped without invoking disposal hooks.
   Future<void> reset({bool disposeInstances = true}) async {
     _ensureNotDisposed();
+    _releaseShadowNotifications();
     final descriptors = _registry.values.toList()
       ..sort((a, b) => b.registrationIndex.compareTo(a.registrationIndex));
-    if (disposeInstances) {
-      for (final descriptor in descriptors) {
+    for (final descriptor in descriptors) {
+      bridge.notifyDependencyEvent(
+          DependencyChangeKind.unregistered, descriptor);
+      if (disposeInstances) {
         await descriptor.dispose();
       }
     }
@@ -856,8 +955,7 @@ final class BridgeScope {
   ///
   /// When [instance] is provided, the matching cached instance is located in
   /// this scope or its ancestors. When `null`, every pending manual readiness
-  /// signal in this scope hierarchy is completed — mirroring
-  /// `get_it.signalReady()`.
+  /// signal in this scope hierarchy is completed.
   void signalReady([Object? instance]) {
     if (instance == null) {
       _signalAllReadyInHierarchy();
@@ -924,6 +1022,8 @@ final class BridgeScope {
     final key = DependencyKey(T, instanceName);
     final descriptor = _registry.remove(key);
     if (descriptor != null) {
+      bridge.notifyDependencyEvent(
+          DependencyChangeKind.unregistered, descriptor);
       await descriptor.dispose();
     }
   }
@@ -943,7 +1043,10 @@ final class BridgeScope {
   ///
   /// Dependencies are disposed in reverse registration order. Idempotent:
   /// calling [dispose] more than once is a no-op.
-  Future<void> dispose() async {
+  ///
+  /// When [disposeInstances] is false the registrations are dropped without
+  /// running cached instances or `onDispose` hooks.
+  Future<void> dispose({bool disposeInstances = true}) async {
     if (_isDisposed) return;
     _isDisposed = true;
     bridge.untrackScope(this);
@@ -951,27 +1054,28 @@ final class BridgeScope {
     try {
       await onDisposeCallback?.call();
     } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'modular_bridge',
-          context: ErrorDescription(
-              'While running BridgeScope.dispose callback for $scopeName'),
-        ),
+      reportBridgeError(
+        error,
+        stackTrace,
+        context: 'While running BridgeScope.dispose callback for $scopeName',
       );
     }
 
     for (final child in _children.toList().reversed) {
-      await child.dispose();
+      await child.dispose(disposeInstances: disposeInstances);
     }
     _children.clear();
     _parent?._children.remove(this);
 
+    _releaseShadowNotifications();
     final descriptors = _registry.values.toList()
       ..sort((a, b) => b.registrationIndex.compareTo(a.registrationIndex));
     for (final descriptor in descriptors) {
-      await descriptor.dispose();
+      bridge.notifyDependencyEvent(
+          DependencyChangeKind.unregistered, descriptor);
+      if (disposeInstances) {
+        await descriptor.dispose();
+      }
     }
     _registry.clear();
   }
@@ -984,7 +1088,7 @@ final class BridgeScope {
 abstract class WillSignalReady {}
 
 /// Immutable snapshot of a registered dependency's metadata.
-@immutable
+@immutable()
 final class DependencyInfo {
   /// Creates a [DependencyInfo] snapshot.
   const DependencyInfo({

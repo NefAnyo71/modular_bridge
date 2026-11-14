@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'package:flutter/widgets.dart';
-import '../config/bridge_config.dart';
-import '../config/bridge_environment.dart';
-import '../core/container/modular_bridge_container.dart';
+import 'package:modular_bridge/modular_bridge.dart';
 
 /// Provides a [ModularBridge] container down the widget tree.
 class ModularBridgeScope extends InheritedWidget {

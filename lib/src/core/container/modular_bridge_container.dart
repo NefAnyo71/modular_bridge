@@ -1,15 +1,21 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'dart:convert';
+import 'dart:developer' as developer;
+
 import '../../config/bridge_config.dart';
 import '../../config/bridge_environment.dart';
 import '../../event_bus/bridge_event.dart';
 import '../../event_bus/bridge_event_bus.dart';
 import '../../event_bus/bridge_subscription.dart';
 import '../../module/feature_module.dart';
+import '../annotations.dart';
+import '../errors/bridge_error_reporter.dart';
 import '../exceptions/bridge_exceptions.dart';
 import 'bridge_scope.dart';
 import 'dependency_descriptor.dart';
+import 'dependency_event.dart';
 import 'dependency_graph.dart';
+import 'dependency_metrics.dart';
 import 'resolution_context.dart';
 
 /// Central dependency injection container, module coordinator, and event router.
@@ -76,8 +82,7 @@ class ModularBridge {
     }
   }
 
-  /// Creates a new registration scope and makes it the active scope, mirroring
-  /// `get_it.pushNewScope`.
+  /// Creates a new registration scope and makes it the active scope.
   ///
   /// While a scope is on [scopeStack], registrations made through this bridge
   /// are stored in the top scope and resolutions check the scope chain before
@@ -154,21 +159,18 @@ class ModularBridge {
       .map((s) => s.scopeName ?? 'scope#${identityHashCode(s)}')
       .toList(growable: false);
 
-  /// Optional callback invoked after every scope stack push/pop, mirroring
-  /// `get_it.onScopeChanged`. The boolean is `true` for pushes.
+  /// Optional callback invoked after every scope stack push/pop.
+  /// The boolean is `true` for pushes.
   void Function(bool pushed)? onScopeChanged;
 
   void _notifyScopeChanged(bool pushed) {
     try {
       onScopeChanged?.call(pushed);
     } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'modular_bridge',
-          context: ErrorDescription('While running onScopeChanged callback'),
-        ),
+      reportBridgeError(
+        error,
+        stackTrace,
+        context: 'While running onScopeChanged callback',
       );
     }
   }
@@ -214,6 +216,13 @@ class ModularBridge {
     return true;
   }
 
+  /// Whether a scope named [scopeName] is currently on the active scope
+  /// stack (i.e. pushed via [pushNewScope] and not yet popped).
+  ///
+  /// For scopes that exist but are not on the stack, use [findScope].
+  bool isScopeActive(String scopeName) =>
+      _scopeStack.any((s) => s.scopeName == scopeName);
+
   /// Finds a live scope by name, searching the stack first and then any
   /// tracked explicit scopes.
   BridgeScope? findScope(String scopeName) {
@@ -227,7 +236,7 @@ class ModularBridge {
   }
 
   /// Sets the global instance, primarily used for test harnesses.
-  @visibleForTesting
+  @visibleForTesting()
   static void setMockInstance(ModularBridge bridge) {
     _instance = bridge;
   }
@@ -235,7 +244,7 @@ class ModularBridge {
   /// Resets the global instance to a fresh container.
   ///
   /// Useful in test `tearDown` blocks after [setMockInstance] was used.
-  @visibleForTesting
+  @visibleForTesting()
   static void resetInstance() {
     _instance = ModularBridge();
   }
@@ -244,6 +253,8 @@ class ModularBridge {
   final BridgeEventBus _eventBus;
   final StreamController<BridgeConfig> _configController =
       StreamController<BridgeConfig>.broadcast();
+  final StreamController<DependencyRegistrationEvent> _dependencyEvents =
+      StreamController<DependencyRegistrationEvent>.broadcast();
 
   final Map<DependencyKey, DependencyDescriptor<dynamic>> _registry = {};
   final Map<String, FeatureModule> _modules = {};
@@ -260,8 +271,7 @@ class ModularBridge {
   bool _isDisposed = false;
 
   /// When `true`, registering an already-registered dependency silently
-  /// replaces it (equivalent to passing `override: true` everywhere),
-  /// mirroring `get_it.allowReassignment`.
+  /// replaces it (equivalent to passing `override: true` everywhere).
   ///
   /// Defaults to `false`. Scope registrations consult this flag on the root
   /// bridge as well.
@@ -295,6 +305,27 @@ class ModularBridge {
   /// new config's streams; the old config's streams are no longer monitored.
   Stream<BridgeConfig> get onConfigChanged => _configController.stream;
 
+  /// Broadcast stream of dependency registration changes across the root
+  /// registry and every live [BridgeScope].
+  ///
+  /// Useful for building DevTools-style inspectors or audit logs.
+  Stream<DependencyRegistrationEvent> get onDependencyEvents =>
+      _dependencyEvents.stream;
+
+  /// Emits a dependency change event. Called by [BridgeScope]; not part of
+  /// the public API contract.
+  void notifyDependencyEvent(
+    DependencyChangeKind kind,
+    DependencyDescriptor<dynamic> descriptor,
+  ) {
+    if (_isDisposed || _dependencyEvents.isClosed) return;
+    _dependencyEvents.add(DependencyRegistrationEvent(
+      kind: kind,
+      info: DependencyInfo.fromDescriptor(descriptor),
+      scopeName: descriptor.scopeName,
+    ));
+  }
+
   /// Names of all currently registered modules.
   List<String> get activeModuleNames => _modules.keys.toList();
 
@@ -303,6 +334,15 @@ class ModularBridge {
   /// Useful for debugging and introspection of the container state.
   List<DependencyKey> get registeredDependencies =>
       List<DependencyKey>.unmodifiable(_registry.keys);
+
+  /// Resolution metrics collected across the root registry and all scopes.
+  ///
+  /// Records per-key resolution counts, cache hits, failures, and durations.
+  /// Reset with [resetMetrics].
+  final DependencyMetrics metrics = DependencyMetrics();
+
+  /// Clears all collected resolution metrics.
+  void resetMetrics() => metrics.reset();
 
   /// Registration metadata for dependencies owned by the root registry.
   List<DependencyInfo> get dependencyInfo => _registry.values
@@ -391,14 +431,10 @@ class ModularBridge {
       try {
         await reset();
       } catch (error, stackTrace) {
-        FlutterError.reportError(
-          FlutterErrorDetails(
-            exception: error,
-            stack: stackTrace,
-            library: 'modular_bridge',
-            context:
-                ErrorDescription('While resetting config-bound dependency'),
-          ),
+        reportBridgeError(
+          error,
+          stackTrace,
+          context: 'While resetting config-bound dependency',
         );
       }
     })));
@@ -461,7 +497,7 @@ class ModularBridge {
       unawaited(existing.dispose());
     }
 
-    _registry[key] = DependencyDescriptor<T>(
+    final descriptor = DependencyDescriptor<T>(
       key: key,
       lifecycle: lifecycle,
       registrationIndex: _registrationCounter++,
@@ -477,7 +513,10 @@ class ModularBridge {
       paramFactory: paramFactory,
       paramAsyncFactory: paramAsyncFactory,
       paramCached: paramCached,
+      metrics: metrics,
     );
+    _registry[key] = descriptor;
+    notifyDependencyEvent(DependencyChangeKind.registered, descriptor);
 
     if (eagerAsync && lifecycle == DependencyLifecycle.asyncSingleton) {
       // Resolve inside a resolution frame so self-dependent eager factories
@@ -568,7 +607,7 @@ class ModularBridge {
   }
 
   /// Registers a singleton whose factory runs only after [dependsOn]
-  /// dependencies are ready, mirroring `get_it.registerSingletonWithDependencies`.
+  /// dependencies are ready.
   ///
   /// The factory receives this bridge; resolution is triggered immediately.
   void registerSingletonWithDependencies<T extends Object>({
@@ -598,6 +637,55 @@ class ModularBridge {
       instanceName: instanceName,
       override: override,
       onDispose: onDispose,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+    );
+    final key = DependencyKey(T, instanceName);
+    final descriptor = _registry[key];
+    final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
+    descriptor?.pendingResult = pending;
+    unawaited(pending.whenComplete(() {
+      if (identical(descriptor?.pendingResult, pending)) {
+        descriptor?.pendingResult = null;
+      }
+    }));
+  }
+
+  /// Async variant of [registerSingletonWithDependencies].
+  ///
+  /// [factoryFunc] may return a value or a [Future]; it runs only after every
+  /// [dependsOn] key has resolved. The registration is an async singleton —
+  /// resolve it with [getAsync]. Resolution is triggered immediately so the
+  /// registration participates in [allReady].
+  void registerSingletonWithDependenciesAsync<T extends Object>({
+    required FutureOr<T> Function(ModularBridge bridge) factoryFunc,
+    required Iterable<DependencyKey> dependsOn,
+    String? instanceName,
+    bool override = false,
+    bool signalsReady = false,
+    void Function(T instance)? onDispose,
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerSingletonWithDependenciesAsync<T>(
+        factoryFunc: (s) => factoryFunc(this),
+        dependsOn: dependsOn,
+        instanceName: instanceName,
+        override: override,
+        signalsReady: signalsReady,
+        onDispose: onDispose,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    registerAsyncSingleton<T>(
+      () async => await factoryFunc(this),
+      instanceName: instanceName,
+      override: override,
+      onDispose: onDispose,
+      eager: false,
       signalsReady: signalsReady,
       dependsOn: dependsOn,
       onCreated: onCreated,
@@ -652,7 +740,7 @@ class ModularBridge {
   /// dependency throws [BridgeAsyncDependencyException].
   ///
   /// Pass `eager: true` to start the resolution immediately at registration
-  /// time (like `get_it.registerSingletonAsync`); eager async singletons
+  /// time; eager async singletons
   /// participate in [allReady].
   void registerAsyncSingleton<T extends Object>(
     Future<T> Function() factory, {
@@ -693,8 +781,7 @@ class ModularBridge {
 
   /// Registers a lazy asynchronous singleton for type [T].
   ///
-  /// Alias for [registerAsyncSingleton] with `eager: false`, mirroring
-  /// `get_it.registerLazySingletonAsync`.
+  /// Alias for [registerAsyncSingleton] with `eager: false`.
   void registerLazySingletonAsync<T extends Object>(
     Future<T> Function() factory, {
     String? instanceName,
@@ -718,8 +805,7 @@ class ModularBridge {
 
   /// Registers an eager asynchronous singleton for type [T].
   ///
-  /// Alias for [registerAsyncSingleton] with `eager: true`, mirroring
-  /// `get_it.registerSingletonAsync`.
+  /// Alias for [registerAsyncSingleton] with `eager: true`.
   void registerSingletonAsync<T extends Object>(
     Future<T> Function() factory, {
     String? instanceName,
@@ -774,7 +860,7 @@ class ModularBridge {
   }
 
   /// Registers a transient factory that receives two parameters at
-  /// resolution time, mirroring `get_it.registerFactoryParam`.
+  /// resolution time.
   ///
   /// Resolve with [getParam]; parameters are not part of the registration
   /// key, so multiple parameter combinations share one registration.
@@ -810,7 +896,7 @@ class ModularBridge {
   }
 
   /// Registers a parameterized factory whose results are cached per
-  /// `(param1, param2)` pair, mirroring `get_it.registerCachedFactoryParam`.
+  /// `(param1, param2)` pair.
   void registerCachedFactoryParam<T extends Object, P1, P2>(
     T Function(P1 param1, P2 param2) factory, {
     String? instanceName,
@@ -1347,6 +1433,52 @@ class ModularBridge {
         .every((d) => !_countsForAllReady(d) || d.isReady);
   }
 
+  /// Eagerly resolves every singleton-style registration in the root
+  /// registry and all live scopes.
+  ///
+  /// Covers `singleton`, `lazySingleton`, and `asyncSingleton` lifecycles
+  /// (including `signalsReady` registrations — readiness signalling is still
+  /// required for [allReady]). Transient factories and parameterized
+  /// factories are skipped because they require arguments or produce a new
+  /// instance per call.
+  ///
+  /// Resolution errors propagate to the caller; use this during app startup
+  /// to surface DI misconfigurations before first use.
+  ///
+  /// Pass [ownerModule] (a [FeatureModule.name]) to warm up only the
+  /// dependencies registered on behalf of that module.
+  Future<void> warmup({bool includeScopes = true, String? ownerModule}) async {
+    _ensureActive();
+    bool warmable(DependencyDescriptor<dynamic> d) =>
+        !d.isParamFactory &&
+        (ownerModule == null || d.ownerModuleName == ownerModule) &&
+        (d.lifecycle == DependencyLifecycle.singleton ||
+            d.lifecycle == DependencyLifecycle.lazySingleton ||
+            d.lifecycle == DependencyLifecycle.asyncSingleton);
+
+    final futures = <Future<void>>[];
+    for (final descriptor in _registry.values) {
+      if (warmable(descriptor)) {
+        futures.add(() async {
+          await _resolveKeyRoot(descriptor.key, async: true);
+        }());
+      }
+    }
+    if (includeScopes) {
+      for (final scope in _liveScopes) {
+        if (scope.isDisposed) continue;
+        for (final descriptor in scope.localDescriptors) {
+          if (warmable(descriptor)) {
+            futures.add(() async {
+              await scope.resolveDependencyKey(descriptor.key, async: true);
+            }());
+          }
+        }
+      }
+    }
+    await Future.wait(futures);
+  }
+
   List<DependencyDescriptor<dynamic>> _readinessDescriptors() {
     final descriptors =
         List<DependencyDescriptor<dynamic>>.of(_registry.values);
@@ -1379,7 +1511,7 @@ class ModularBridge {
   ///
   /// When [instance] is provided, the matching cached instance is located in
   /// the active scope chain or root registry. When `null`, every pending
-  /// manual readiness signal is completed — mirroring `get_it.signalReady()`.
+  /// manual readiness signal is completed.
   void signalReady([Object? instance]) {
     final scope = _activeScope;
     if (scope != null) {
@@ -1502,8 +1634,9 @@ class ModularBridge {
   Future<void> _resetRootDependencies({required bool disposeInstances}) async {
     final descriptors = _registry.values.toList()
       ..sort((a, b) => b.registrationIndex.compareTo(a.registrationIndex));
-    if (disposeInstances) {
-      for (final descriptor in descriptors) {
+    for (final descriptor in descriptors) {
+      notifyDependencyEvent(DependencyChangeKind.unregistered, descriptor);
+      if (disposeInstances) {
         await descriptor.dispose();
       }
     }
@@ -1563,6 +1696,7 @@ class ModularBridge {
       }
       return;
     }
+    notifyDependencyEvent(DependencyChangeKind.unregistered, descriptor);
     await descriptor.dispose();
   }
 
@@ -1580,11 +1714,25 @@ class ModularBridge {
   ///
   /// Module registrations may run concurrently: each module's dependencies
   /// are attributed to the correct owner via an async-local zone context.
-  Future<void> registerModule(FeatureModule module) async {
+  ///
+  /// When [checkHealth] is true, [FeatureModule.healthCheck] runs right after
+  /// successful registration; unhealthy results and thrown errors are
+  /// reported via [reportBridgeError] without failing registration.
+  Future<void> registerModule(
+    FeatureModule module, {
+    bool checkHealth = false,
+  }) async {
     _ensureActive();
     final moduleName = module.name;
     if (_modules.containsKey(moduleName)) {
       throw BridgeModuleAlreadyRegisteredException(moduleName);
+    }
+
+    // Environment-gated modules are skipped silently when the active
+    // environment is not in their allow-list.
+    final environments = module.environments;
+    if (environments != null && !environments.contains(_config.environment)) {
+      return;
     }
 
     // Verify module dependencies
@@ -1621,8 +1769,31 @@ class ModularBridge {
       rethrow;
     }
 
+    if (checkHealth) {
+      await _runModuleHealthCheck(module);
+    }
+
     if (_registrationDepth == 0) {
       _notifyModulesReadyIfNeeded();
+    }
+  }
+
+  Future<void> _runModuleHealthCheck(FeatureModule module) async {
+    try {
+      final healthy = await module.healthCheck(this);
+      if (!healthy) {
+        reportBridgeError(
+          StateError('healthCheck returned false'),
+          StackTrace.current,
+          context: 'Module health check for ${module.name}',
+        );
+      }
+    } catch (error, stackTrace) {
+      reportBridgeError(
+        error,
+        stackTrace,
+        context: 'Module health check for ${module.name}',
+      );
     }
   }
 
@@ -1633,7 +1804,7 @@ class ModularBridge {
   /// invoked immediately. The hook re-arms automatically when the last module
   /// is unregistered or [reset] is called, so callbacks fire again on the
   /// next registration cycle. Callback errors are reported via
-  /// [FlutterError.reportError] and never break module registration.
+  /// [reportBridgeError] and never break module registration.
   void onModulesReady(FutureOr<void> Function(ModularBridge bridge) callback) {
     _readyCallbacks.add(callback);
     if (_modulesReadyNotified) {
@@ -1654,25 +1825,18 @@ class ModularBridge {
       final result = callback(this);
       if (result is Future<void>) {
         unawaited(result.catchError((Object error, StackTrace stackTrace) {
-          FlutterError.reportError(
-            FlutterErrorDetails(
-              exception: error,
-              stack: stackTrace,
-              library: 'modular_bridge',
-              context:
-                  ErrorDescription('While running onModulesReady callback'),
-            ),
+          reportBridgeError(
+            error,
+            stackTrace,
+            context: 'While running onModulesReady callback',
           );
         }));
       }
     } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'modular_bridge',
-          context: ErrorDescription('While running onModulesReady callback'),
-        ),
+      reportBridgeError(
+        error,
+        stackTrace,
+        context: 'While running onModulesReady callback',
       );
     }
   }
@@ -1683,30 +1847,21 @@ class ModularBridge {
     try {
       await module.dispose(this);
     } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'modular_bridge',
-          context: ErrorDescription(
+      reportBridgeError(
+        error,
+        stackTrace,
+        context:
             'While rolling back failed module registration for $moduleName',
-          ),
-        ),
       );
     }
 
     try {
       await _eventBus.cancelSubscriptionsForOwner(moduleName);
     } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'modular_bridge',
-          context: ErrorDescription(
-            'While canceling subscriptions for failed module $moduleName',
-          ),
-        ),
+      reportBridgeError(
+        error,
+        stackTrace,
+        context: 'While canceling subscriptions for failed module $moduleName',
       );
     }
 
@@ -1722,7 +1877,11 @@ class ModularBridge {
         .map((entry) => entry.key)
         .toList();
     for (final key in rootKeys) {
-      await _registry.remove(key)?.dispose();
+      final descriptor = _registry.remove(key);
+      if (descriptor != null) {
+        notifyDependencyEvent(DependencyChangeKind.unregistered, descriptor);
+        await descriptor.dispose();
+      }
     }
     for (final scope in _liveScopes.toList()) {
       await scope.removeModuleDependencies(moduleName);
@@ -1738,12 +1897,19 @@ class ModularBridge {
   /// active** (best-effort batch semantics); only the failed module is rolled
   /// back. To guarantee an all-or-nothing batch, wrap the call and invoke
   /// [reset] on failure.
-  Future<void> registerModules(List<FeatureModule> modules) async {
+  ///
+  /// When [checkHealth] is true, each module's [FeatureModule.healthCheck]
+  /// runs right after its successful registration; results are reported via
+  /// [reportBridgeError] without failing the batch. See [registerModule].
+  Future<void> registerModules(
+    List<FeatureModule> modules, {
+    bool checkHealth = false,
+  }) async {
     _ensureActive();
     _registrationDepth++;
     try {
       for (final module in _topologicalSortModules(modules)) {
-        await registerModule(module);
+        await registerModule(module, checkHealth: checkHealth);
       }
     } finally {
       _registrationDepth--;
@@ -1787,6 +1953,36 @@ class ModularBridge {
       visit(module);
     }
     return sorted;
+  }
+
+  /// Runs [FeatureModule.healthCheck] on every registered module and returns
+  /// one [ModuleHealthResult] per module, in registration order.
+  ///
+  /// Modules whose `environments` allow-list excludes the active environment
+  /// are skipped during registration and therefore never appear here. Errors
+  /// thrown by a health check are captured in the result's `error` field
+  /// with `isHealthy: false` instead of propagating — inspect the returned
+  /// list (or check `results.every((r) => r.isHealthy)`) to detect unhealthy
+  /// modules.
+  Future<List<ModuleHealthResult>> checkModuleHealth() async {
+    _ensureActive();
+    final results = <ModuleHealthResult>[];
+    for (final module in _modules.values) {
+      try {
+        final healthy = await module.healthCheck(this);
+        results.add(ModuleHealthResult(
+          moduleName: module.name,
+          isHealthy: healthy,
+        ));
+      } catch (error) {
+        results.add(ModuleHealthResult(
+          moduleName: module.name,
+          isHealthy: false,
+          error: error,
+        ));
+      }
+    }
+    return results;
   }
 
   /// Checks whether a module of type [M] is currently registered.
@@ -1919,6 +2115,13 @@ class ModularBridge {
   /// to each new listener before emitting live events.
   Stream<T> onLatest<T extends BridgeEvent>() => _eventBus.onLatest<T>();
 
+  /// Returns the most recently published event assignable to [T], or `null`.
+  T? lastEvent<T extends BridgeEvent>() => _eventBus.lastEvent<T>();
+
+  /// Returns a stream replaying up to the last 200 events of type [T] before
+  /// continuing with live events.
+  Stream<T> history<T extends BridgeEvent>() => _eventBus.history<T>();
+
   /// Completes with the next event of type [T], or throws a [TimeoutException]
   /// if [timeout] elapses first.
   Future<T> once<T extends BridgeEvent>({Duration? timeout}) =>
@@ -1931,6 +2134,81 @@ class ModularBridge {
   // ---------------------------------------------------------------------------
   // DIAGNOSTICS
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // DEVTOOLS SERVICE EXTENSION
+  // ---------------------------------------------------------------------------
+
+  static bool _devToolsRegistered = false;
+
+  /// Registers VM service extensions for live container inspection.
+  ///
+  /// Available extensions (query via `dart:developer` / DevTools VM service):
+  /// - `ext.modular_bridge.state` — JSON snapshot of registrations, scopes,
+  ///   modules, pending async resolutions, leak issues, and metrics.
+  /// - `ext.modular_bridge.graph` — Graphviz DOT of the `dependsOn` graph.
+  /// - `ext.modular_bridge.metrics` — resolution metrics snapshot.
+  ///
+  /// Registration is process-wide: the first bridge to call this method owns
+  /// the extensions. No-op on platforms without VM service support.
+  void enableDevTools() {
+    if (_devToolsRegistered) return;
+    try {
+      developer.registerExtension(
+        'ext.modular_bridge.state',
+        (method, params) async => developer.ServiceExtensionResponse.result(
+            jsonEncode(_devToolsState())),
+      );
+      developer.registerExtension(
+        'ext.modular_bridge.graph',
+        (method, params) async => developer.ServiceExtensionResponse.result(
+            jsonEncode({'dot': dependencyGraph().toDot()})),
+      );
+      developer.registerExtension(
+        'ext.modular_bridge.metrics',
+        (method, params) async => developer.ServiceExtensionResponse.result(
+            jsonEncode(metrics.snapshot())),
+      );
+      _devToolsRegistered = true;
+    } catch (error, stackTrace) {
+      reportBridgeError(
+        error,
+        stackTrace,
+        context: 'While registering DevTools service extensions',
+      );
+    }
+  }
+
+  Map<String, Object?> _devToolsState() {
+    final report = diagnosticsReport();
+    return {
+      'registrations': [
+        for (final info in report.registrations)
+          {
+            'key': info.key.toString(),
+            'lifecycle': info.lifecycle.name,
+            'scope': info.scopeName,
+            'module': info.ownerModuleName,
+            'isReady': info.isReady,
+            'hasInstance': info.hasInstance,
+            'signalsReady': info.signalsReady,
+          },
+      ],
+      'modules': report.moduleNames,
+      'scopes': report.activeScopeNames,
+      'scopeStack': report.scopeStack,
+      'pendingAsyncResolutions': report.pendingAsyncResolutions,
+      'issues': report.issues,
+      'metrics': metrics.snapshot(),
+      'events': {
+        'totalPublished': _eventBus.totalPublished,
+        'publishCounts': {
+          for (final e in _eventBus.publishCounts.entries)
+            e.key.toString(): e.value,
+        },
+      },
+    };
+  }
 
   /// Returns a structured snapshot of container health for debugging and
   /// test assertions.
@@ -1955,6 +2233,7 @@ class ModularBridge {
           .map((d) => d.key.toString())
           .toList(growable: false),
       issues: debugLeakReport(),
+      metrics: metrics.snapshot(),
     );
   }
 
@@ -1995,7 +2274,12 @@ class ModularBridge {
       final fromId = BridgeDependencyGraph.nodeId(info);
       for (final dep in info.dependsOn) {
         final target = resolveTarget(info, dep);
-        edges.add(DependencyEdge(from: info, to: dep));
+        edges.add(DependencyEdge(
+          from: info,
+          to: dep,
+          toNodeId:
+              target == null ? null : BridgeDependencyGraph.nodeId(target),
+        ));
         if (target != null) {
           adjacency
               .putIfAbsent(fromId, () => [])
@@ -2044,7 +2328,7 @@ class ModularBridge {
   /// An empty list means no issues were detected. Note that active event bus
   /// subscriptions are reported but may be intentional while modules are
   /// registered.
-  @visibleForTesting
+  @visibleForTesting()
   List<String> debugLeakReport() {
     final issues = <String>[];
 
@@ -2069,7 +2353,7 @@ class ModularBridge {
 
   /// Throws a [StateError] unless a dependency of type [T] is registered in
   /// the current resolution context.
-  @visibleForTesting
+  @visibleForTesting()
   void assertRegistered<T extends Object>({String? instanceName}) {
     if (!isRegistered<T>(instanceName: instanceName)) {
       throw StateError(
@@ -2080,7 +2364,7 @@ class ModularBridge {
 
   /// Registration keys that still participate in readiness tracking and are
   /// not ready yet.
-  @visibleForTesting
+  @visibleForTesting()
   List<String> get pendingReadinessKeys => _readinessDescriptors()
       .where((d) => _countsForAllReady(d) && !d.isReady)
       .map((d) => d.key.toString())
@@ -2088,7 +2372,7 @@ class ModularBridge {
 
   /// Throws a [StateError] listing pending registrations unless
   /// [allReadySync] returns true.
-  @visibleForTesting
+  @visibleForTesting()
   void assertAllReadySync() {
     if (!allReadySync()) {
       throw StateError(
@@ -2098,7 +2382,7 @@ class ModularBridge {
   }
 
   /// Throws a [StateError] if [debugLeakReport] detects any issues.
-  @visibleForTesting
+  @visibleForTesting()
   void assertNoLeaks() {
     final issues = debugLeakReport();
     if (issues.isNotEmpty) {
@@ -2112,16 +2396,25 @@ class ModularBridge {
   /// Disposes all registered singletons (waiting for in-flight async
   /// resolutions), unregisters modules, cancels event subscriptions, and
   /// clears the resolution state. Ideal for test `tearDown`.
-  Future<void> reset() async {
+  ///
+  /// When [disposeInstances] is false, registrations are dropped without
+  /// running cached instances or `onDispose` hooks. Module `dispose` hooks and
+  /// event subscription cleanup always run.
+  Future<void> reset({bool disposeInstances = true}) async {
     _registrationDepth = 0;
     _configBindings.clear();
 
     // Dispose scopes in reverse stack order, then any remaining live scopes.
     while (_scopeStack.isNotEmpty) {
-      await popScope();
+      final scope = _scopeStack.removeLast();
+      try {
+        await scope.dispose(disposeInstances: disposeInstances);
+      } finally {
+        _notifyScopeChanged(false);
+      }
     }
     for (final scope in _liveScopes.toList().reversed) {
-      await scope.dispose();
+      await scope.dispose(disposeInstances: disposeInstances);
     }
 
     // Dispose modules in reverse order
@@ -2130,13 +2423,10 @@ class ModularBridge {
       try {
         await module.dispose(this);
       } catch (e, st) {
-        FlutterError.reportError(
-          FlutterErrorDetails(
-            exception: e,
-            stack: st,
-            library: 'modular_bridge',
-            context: ErrorDescription('While disposing module ${module.name}'),
-          ),
+        reportBridgeError(
+          e,
+          st,
+          context: 'While disposing module ${module.name}',
         );
       }
     }
@@ -2144,13 +2434,7 @@ class ModularBridge {
     _modulesReadyNotified = false;
 
     // Dispose dependencies in reverse registration order (LIFO)
-    final descriptors = _registry.values.toList()
-      ..sort((a, b) => b.registrationIndex.compareTo(a.registrationIndex));
-    for (final descriptor in descriptors) {
-      await descriptor.dispose();
-    }
-    _registry.clear();
-    _registrationCounter = 0;
+    await _resetRootDependencies(disposeInstances: disposeInstances);
 
     // Clear event bus subscriptions
     await _eventBus.clearSubscriptions();
@@ -2171,6 +2455,7 @@ class ModularBridge {
     await _configValueSubscription.cancel();
     await _configSwapSubscription.cancel();
     await _configController.close();
+    await _dependencyEvents.close();
   }
 
   void _ensureActive() {
@@ -2181,7 +2466,7 @@ class ModularBridge {
 }
 
 /// Immutable diagnostics snapshot for a [ModularBridge] container.
-@immutable
+@immutable()
 final class BridgeDiagnosticsReport {
   /// Creates a diagnostics report.
   const BridgeDiagnosticsReport({
@@ -2192,6 +2477,7 @@ final class BridgeDiagnosticsReport {
     required this.activeSubscriptionCount,
     required this.pendingAsyncResolutions,
     required this.issues,
+    required this.metrics,
   });
 
   /// All known dependency registrations across root and live scopes.
@@ -2214,6 +2500,9 @@ final class BridgeDiagnosticsReport {
 
   /// Leak/integrity issues detected by [ModularBridge.debugLeakReport].
   final List<String> issues;
+
+  /// Resolution metrics snapshot (`DependencyMetrics.snapshot()`).
+  final Map<String, Object?> metrics;
 
   /// Whether the report contains no detected issues.
   bool get isHealthy => issues.isEmpty;

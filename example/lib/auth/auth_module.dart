@@ -27,4 +27,14 @@ final class AuthModule extends FeatureModule {
     bridge.registerLazySingleton<AuthRepository>(
         () => createAuthRepository(bridge));
   }
+
+  @override
+  Future<bool> healthCheck(ModularBridge bridge) async {
+    // Verifies the infrastructure this module depends on is reachable:
+    // CoreModule's ApiClient must exist and answer a health probe.
+    final apiClient = bridge.tryGet<ApiClient>();
+    if (apiClient == null) return false;
+    final response = await apiClient.get('/health');
+    return response.isNotEmpty;
+  }
 }

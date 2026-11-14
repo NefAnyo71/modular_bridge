@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:modular_bridge/modular_bridge.dart';
+import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 
 void main() {
   group('Flutter Widget Integration', () {

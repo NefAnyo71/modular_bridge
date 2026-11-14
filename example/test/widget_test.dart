@@ -1,7 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:modular_bridge/modular_bridge.dart';
+import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 import 'package:modular_bridge_example/analytics/analytics_module.dart';
 import 'package:modular_bridge_example/auth/auth_module.dart';
 import 'package:modular_bridge_example/cart/cart_module.dart';

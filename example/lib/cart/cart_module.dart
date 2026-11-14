@@ -19,6 +19,9 @@ final class CartModule extends FeatureModule {
   void registerDependencies(ModularBridge bridge) {
     bridge.registerLazySingleton<CartService>(
       () => CartService(bridge),
+      // dep<T>() is a shorthand alias for DependencyKey(T) — the factory
+      // only runs after LoggingService has been resolved.
+      dependsOn: [dep<LoggingService>()],
       onDispose: (service) => service.dispose(),
     );
   }
@@ -30,9 +33,9 @@ final class CartModule extends FeatureModule {
 
     // Listen to UserLoggedOutEvent with auto-disposal lifecycle
     subscribe<UserLoggedOutEvent>(bridge, (event) {
-      logger.log('[CartModule] User logged out (${event.userId}). Auto-clearing cart items.');
+      logger.log(
+          '[CartModule] User logged out (${event.userId}). Auto-clearing cart items.');
       cartService.clear(reason: 'User session terminated');
     });
   }
 }
-

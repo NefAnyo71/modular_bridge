@@ -1,5 +1,7 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+
+import '../config/bridge_environment.dart';
+import '../core/annotations.dart';
 import '../core/container/modular_bridge_container.dart';
 import '../event_bus/bridge_event.dart';
 import '../event_bus/bridge_subscription.dart';
@@ -46,6 +48,14 @@ abstract class FeatureModule {
   /// Other [FeatureModule] types that must be registered before this module can initialize.
   List<Type> get dependencies => const [];
 
+  /// Optional environment restriction for this module.
+  ///
+  /// When non-null, [ModularBridge.registerModule] skips the module unless
+  /// `bridge.config.environment` is contained in this list — useful for
+  /// dev-only debug modules or prod-only analytics modules. `null` (the
+  /// default) means the module registers in every environment.
+  List<BridgeEnvironment>? get environments => null;
+
   final List<BridgeSubscription> _internalSubscriptions = [];
 
   /// Subscribes to events on the [ModularBridge.eventBus] bound to this module's lifetime.
@@ -81,10 +91,20 @@ abstract class FeatureModule {
   /// Lifecycle hook invoked after dependencies have been registered and verified.
   FutureOr<void> init(ModularBridge bridge) {}
 
+  /// Optional health verification hook, invoked by
+  /// [ModularBridge.checkModuleHealth].
+  ///
+  /// Return `true` when the module is healthy (the default). Return `false`
+  /// or throw to report the module as unhealthy — thrown errors are captured
+  /// in the [ModuleHealthResult] instead of propagating. Typical checks:
+  /// probing backend connectivity, validating required config keys, or
+  /// verifying that eagerly resolved dependencies are usable.
+  FutureOr<bool> healthCheck(ModularBridge bridge) => true;
+
   /// Lifecycle hook invoked when the module is being unregistered or the bridge is reset.
   ///
   /// Automatically cancels all subscriptions created via [subscribe].
-  @mustCallSuper
+  @mustCallSuper()
   FutureOr<void> dispose(ModularBridge bridge) async {
     _isDisposed = true;
     for (final sub in _internalSubscriptions) {
@@ -92,4 +112,28 @@ abstract class FeatureModule {
     }
     _internalSubscriptions.clear();
   }
+}
+
+/// Result of a single [FeatureModule.healthCheck] invocation.
+@immutable()
+final class ModuleHealthResult {
+  /// Creates a [ModuleHealthResult].
+  const ModuleHealthResult({
+    required this.moduleName,
+    required this.isHealthy,
+    this.error,
+  });
+
+  /// The [FeatureModule.name] that was checked.
+  final String moduleName;
+
+  /// Whether [FeatureModule.healthCheck] reported the module as healthy.
+  final bool isHealthy;
+
+  /// The error thrown by [FeatureModule.healthCheck], if any.
+  final Object? error;
+
+  @override
+  String toString() => 'ModuleHealthResult($moduleName, isHealthy: $isHealthy'
+      '${error == null ? '' : ', error: $error'})';
 }

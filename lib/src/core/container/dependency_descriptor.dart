@@ -1,6 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import '../annotations.dart';
+import '../errors/bridge_error_reporter.dart';
+import 'dependency_metrics.dart';
 
 /// Defines the lifetime and instantiation strategy of a registered dependency.
 enum DependencyLifecycle {
@@ -23,10 +25,28 @@ enum DependencyLifecycle {
 }
 
 /// Identifies a registered dependency by its Dart [type] and optional [name].
-@immutable
+@immutable()
 final class DependencyKey {
   /// Creates a [DependencyKey].
   const DependencyKey(this.type, [this.name]);
+
+  /// Shorthand for building a [DependencyKey] from a type, intended for
+  /// `dependsOn` lists:
+  ///
+  /// ```dart
+  /// bridge.registerSingletonWithDependencies<CheckoutService>(
+  ///   () => CheckoutService(),
+  ///   dependsOn: [
+  ///     DependencyKey.of<PaymentGateway>(),
+  ///     DependencyKey.of<ApiConfig>('prod'),
+  ///   ],
+  /// );
+  /// ```
+  ///
+  /// Equivalent to `DependencyKey(T, name)`; see also the top-level [dep]
+  /// alias for an even shorter form.
+  static DependencyKey of<T extends Object>([String? name]) =>
+      DependencyKey(T, name);
 
   /// The static or runtime Dart type of the dependency.
   final Type type;
@@ -49,12 +69,19 @@ final class DependencyKey {
   String toString() => name != null ? '$type(\'$name\')' : '$type';
 }
 
+/// Concise alias for [DependencyKey.of], for readable `dependsOn` lists:
+///
+/// ```dart
+/// dependsOn: [dep<PaymentGateway>(), dep<ApiConfig>('prod')]
+/// ```
+DependencyKey dep<T extends Object>([String? name]) =>
+    DependencyKey.of<T>(name);
+
 /// Interface for dependencies that manage their own disposal.
 ///
 /// When a registered instance implements [Disposable] and no explicit
 /// `onDispose`/`disposingFunction` hook was provided, the container calls
-/// [onDispose] automatically during unregister, scope pop, or reset —
-/// mirroring `get_it`'s `Disposable` support.
+/// [onDispose] automatically during unregister, scope pop, or reset.
 abstract class Disposable {
   /// Releases resources held by this instance.
   FutureOr<void> onDispose();
@@ -80,6 +107,7 @@ final class DependencyDescriptor<T> {
     this.paramFactory,
     this.paramAsyncFactory,
     this.paramCached = false,
+    this.metrics,
   })  : factory = factory ??
             (() => throw StateError(
                 'Dependency ${key.toString()} has no synchronous factory.')),
@@ -143,6 +171,9 @@ final class DependencyDescriptor<T> {
   /// Whether parameterized resolutions are cached per `(param1, param2)`
   /// pair (`registerCachedFactoryParam` semantics).
   final bool paramCached;
+
+  /// Optional metrics recorder; when set, every factory invocation is timed.
+  final DependencyMetrics? metrics;
 
   final Map<(Object?, Object?), T> _paramCache = {};
   final Map<(Object?, Object?), Future<T>> _paramAsyncCache = {};
@@ -241,8 +272,16 @@ final class DependencyDescriptor<T> {
     switch (lifecycle) {
       case DependencyLifecycle.singleton:
       case DependencyLifecycle.lazySingleton:
-        if (_cachedInstance != null) return _cachedInstance as T;
+        if (_cachedInstance != null) {
+          metrics?.record(key.toString(),
+              elapsedMicros: 0,
+              cacheHit: true,
+              failed: false,
+              module: ownerModuleName);
+          return _cachedInstance as T;
+        }
         _syncResolutionActive = true;
+        final sw = metrics == null ? null : (Stopwatch()..start());
         try {
           final instance = factory();
           if (!_disposed) {
@@ -252,14 +291,41 @@ final class DependencyDescriptor<T> {
               signalReady();
             }
           }
+          metrics?.record(key.toString(),
+              elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+              cacheHit: false,
+              failed: false,
+              module: ownerModuleName);
           return instance;
+        } catch (_) {
+          metrics?.record(key.toString(),
+              elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+              cacheHit: false,
+              failed: true,
+              module: ownerModuleName);
+          rethrow;
         } finally {
           _syncResolutionActive = false;
         }
       case DependencyLifecycle.factory:
-        final instance = factory();
-        onCreated?.call(instance);
-        return instance;
+        final sw = metrics == null ? null : (Stopwatch()..start());
+        try {
+          final instance = factory();
+          onCreated?.call(instance);
+          metrics?.record(key.toString(),
+              elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+              cacheHit: false,
+              failed: false,
+              module: ownerModuleName);
+          return instance;
+        } catch (_) {
+          metrics?.record(key.toString(),
+              elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+              cacheHit: false,
+              failed: true,
+              module: ownerModuleName);
+          rethrow;
+        }
       case DependencyLifecycle.asyncSingleton:
       case DependencyLifecycle.asyncFactory:
         throw StateError('unreachable');
@@ -272,7 +338,14 @@ final class DependencyDescriptor<T> {
     switch (lifecycle) {
       case DependencyLifecycle.asyncSingleton:
         final pending = _asyncFuture;
-        if (pending != null) return pending;
+        if (pending != null) {
+          metrics?.record(key.toString(),
+              elapsedMicros: 0,
+              cacheHit: true,
+              failed: false,
+              module: ownerModuleName);
+          return pending;
+        }
         late final Future<T> future;
         future = _resolveAsyncFactory().catchError((Object error) {
           if (identical(_asyncFuture, future)) {
@@ -294,6 +367,7 @@ final class DependencyDescriptor<T> {
   /// Invokes the async factory and caches singleton resolutions.
   Future<T> _resolveAsyncFactory() async {
     _ensureNotDisposed();
+    final sw = metrics == null ? null : (Stopwatch()..start());
     try {
       final instance = await asyncFactory!();
       if (_disposed) {
@@ -308,8 +382,18 @@ final class DependencyDescriptor<T> {
       if (!signalsReady) {
         signalReady();
       }
+      metrics?.record(key.toString(),
+          elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+          cacheHit: false,
+          failed: false,
+          module: ownerModuleName);
       return instance;
     } catch (_) {
+      metrics?.record(key.toString(),
+          elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+          cacheHit: false,
+          failed: true,
+          module: ownerModuleName);
       rethrow;
     }
   }
@@ -358,7 +442,7 @@ final class DependencyDescriptor<T> {
   /// Resolves a parameterized factory with the given arguments.
   ///
   /// When [paramCached] is true the result is cached per `(param1, param2)`
-  /// pair, mirroring `get_it.registerCachedFactoryParam`.
+  /// pair.
   T resolveParam(Object? param1, Object? param2) {
     _ensureNotDisposed();
     final factory = paramFactory;
@@ -369,15 +453,52 @@ final class DependencyDescriptor<T> {
     final cacheKey = (param1, param2);
     if (paramCached) {
       final cached = _paramCache[cacheKey];
-      if (cached != null) return cached;
-      final instance = factory(param1, param2);
-      _paramCache[cacheKey] = instance;
-      onCreated?.call(instance);
-      return instance;
+      if (cached != null) {
+        metrics?.record(key.toString(),
+            elapsedMicros: 0,
+            cacheHit: true,
+            failed: false,
+            module: ownerModuleName);
+        return cached;
+      }
+      final sw = metrics == null ? null : (Stopwatch()..start());
+      try {
+        final instance = factory(param1, param2);
+        _paramCache[cacheKey] = instance;
+        onCreated?.call(instance);
+        metrics?.record(key.toString(),
+            elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+            cacheHit: false,
+            failed: false,
+            module: ownerModuleName);
+        return instance;
+      } catch (_) {
+        metrics?.record(key.toString(),
+            elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+            cacheHit: false,
+            failed: true,
+            module: ownerModuleName);
+        rethrow;
+      }
     }
-    final instance = factory(param1, param2);
-    onCreated?.call(instance);
-    return instance;
+    final sw = metrics == null ? null : (Stopwatch()..start());
+    try {
+      final instance = factory(param1, param2);
+      onCreated?.call(instance);
+      metrics?.record(key.toString(),
+          elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+          cacheHit: false,
+          failed: false,
+          module: ownerModuleName);
+      return instance;
+    } catch (_) {
+      metrics?.record(key.toString(),
+          elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+          cacheHit: false,
+          failed: true,
+          module: ownerModuleName);
+      rethrow;
+    }
   }
 
   /// Asynchronously resolves a parameterized factory with the given
@@ -392,7 +513,14 @@ final class DependencyDescriptor<T> {
     final cacheKey = (param1, param2);
     if (paramCached) {
       final pending = _paramAsyncCache[cacheKey];
-      if (pending != null) return pending;
+      if (pending != null) {
+        metrics?.record(key.toString(),
+            elapsedMicros: 0,
+            cacheHit: true,
+            failed: false,
+            module: ownerModuleName);
+        return pending;
+      }
       late final Future<T> future;
       future = _resolveParamAsyncInner(factory, param1, param2)
           .catchError((Object error) {
@@ -413,14 +541,29 @@ final class DependencyDescriptor<T> {
     Object? param2,
   ) async {
     _ensureNotDisposed();
-    final instance = await factory(param1, param2);
-    if (_disposed) {
-      await _runOnDispose(instance);
-      throw StateError(
-          'Dependency ${key.toString()} was disposed during resolution.');
+    final sw = metrics == null ? null : (Stopwatch()..start());
+    try {
+      final instance = await factory(param1, param2);
+      if (_disposed) {
+        await _runOnDispose(instance);
+        throw StateError(
+            'Dependency ${key.toString()} was disposed during resolution.');
+      }
+      onCreated?.call(instance);
+      metrics?.record(key.toString(),
+          elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+          cacheHit: false,
+          failed: false,
+          module: ownerModuleName);
+      return instance;
+    } catch (_) {
+      metrics?.record(key.toString(),
+          elapsedMicros: sw?.elapsedMicroseconds ?? 0,
+          cacheHit: false,
+          failed: true,
+          module: ownerModuleName);
+      rethrow;
     }
-    onCreated?.call(instance);
-    return instance;
   }
 
   /// Disposes the cached instance and waits for async disposal hooks.
@@ -474,14 +617,10 @@ final class DependencyDescriptor<T> {
         await result;
       }
     } catch (e, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: e,
-          stack: stackTrace,
-          library: 'modular_bridge',
-          context:
-              ErrorDescription('While disposing dependency ${key.toString()}'),
-        ),
+      reportBridgeError(
+        e,
+        stackTrace,
+        context: 'While disposing dependency ${key.toString()}',
       );
     }
   }

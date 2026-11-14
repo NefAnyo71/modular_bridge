@@ -1,4 +1,6 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
+
+import 'package:test/test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
 import '../fixtures/test_fixtures.dart';
@@ -318,6 +320,133 @@ void main() {
           isFalse);
     });
   });
+
+  group('Module health checks', () {
+    late ModularBridge bridge;
+
+    setUp(() {
+      bridge = ModularBridge.createIsolated();
+    });
+
+    tearDown(() async {
+      await bridge.reset();
+    });
+
+    test('checkModuleHealth reports healthy modules by default', () async {
+      await bridge.registerModule(CoreTestModule());
+
+      final results = await bridge.checkModuleHealth();
+
+      expect(results, hasLength(1));
+      expect(results.single.moduleName, 'CoreTestModule');
+      expect(results.single.isHealthy, isTrue);
+      expect(results.single.error, isNull);
+    });
+
+    test('returns an empty list when no modules are registered', () async {
+      expect(await bridge.checkModuleHealth(), isEmpty);
+    });
+
+    test('captures false and thrown healthCheck results per module', () async {
+      await bridge.registerModules([
+        _HealthModule(moduleName: 'UnhealthyModule', healthy: false),
+        _HealthModule(
+            moduleName: 'ThrowingModule', error: StateError('probe failed')),
+        _HealthModule(moduleName: 'AsyncModule'),
+      ]);
+
+      final results = await bridge.checkModuleHealth();
+      final byName = {for (final r in results) r.moduleName: r};
+
+      expect(byName['UnhealthyModule']!.isHealthy, isFalse);
+      expect(byName['UnhealthyModule']!.error, isNull);
+      expect(byName['ThrowingModule']!.isHealthy, isFalse);
+      expect(byName['ThrowingModule']!.error, isA<StateError>());
+      expect(byName['AsyncModule']!.isHealthy, isTrue);
+      expect(
+        byName['AsyncModule']!.moduleName,
+        'AsyncModule',
+      );
+    });
+
+    test('healthCheck receives the bridge instance', () async {
+      final module = _HealthModule(moduleName: 'ProbeModule');
+      await bridge.registerModule(module);
+
+      await bridge.checkModuleHealth();
+      expect(module.seenBridge, same(bridge));
+    });
+
+    test('throws StateError on a disposed bridge', () async {
+      await bridge.dispose();
+      expect(
+        () => bridge.checkModuleHealth(),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test(
+        'registerModule(checkHealth: true) runs healthCheck and stays quiet '
+        'for healthy modules', () async {
+      final module = _HealthModule(moduleName: 'AutoHealthy');
+      final reports = <BridgeErrorReport>[];
+      final previous = bridgeErrorReporter;
+      bridgeErrorReporter = _CollectingReporter(reports);
+      addTearDown(() => bridgeErrorReporter = previous);
+
+      await bridge.registerModule(module, checkHealth: true);
+
+      expect(module.healthCheckCalls, 1);
+      expect(reports, isEmpty);
+    });
+
+    test(
+        'registerModule(checkHealth: true) reports unhealthy and throwing '
+        'modules without failing registration', () async {
+      final reports = <BridgeErrorReport>[];
+      final previous = bridgeErrorReporter;
+      bridgeErrorReporter = _CollectingReporter(reports);
+      addTearDown(() => bridgeErrorReporter = previous);
+
+      final unhealthy =
+          _HealthModule(moduleName: 'AutoUnhealthy', healthy: false);
+      final throwing = _HealthModule(
+          moduleName: 'AutoThrowing', error: StateError('probe failed'));
+
+      await bridge.registerModule(unhealthy, checkHealth: true);
+      await bridge.registerModule(throwing, checkHealth: true);
+
+      // Both modules registered successfully despite failing health checks.
+      expect(bridge.isModuleRegistered<_HealthModule>(), isTrue);
+      expect(reports, hasLength(2));
+      expect(
+        reports.map((r) => r.context),
+        containsAll([
+          contains('AutoUnhealthy'),
+          contains('AutoThrowing'),
+        ]),
+      );
+    });
+
+    test('registerModule without checkHealth does not run healthCheck',
+        () async {
+      final module = _HealthModule(moduleName: 'LazyHealth');
+      await bridge.registerModule(module);
+
+      expect(module.healthCheckCalls, 0);
+    });
+  });
+}
+
+class _CollectingReporter implements BridgeErrorReporter {
+  _CollectingReporter(this.reports);
+
+  final List<BridgeErrorReport> reports;
+
+  @override
+  void report(BridgeErrorReport report) {
+    reports.add(report);
+  }
 }
 
 class _AsyncRegistrationModule extends FeatureModule {
@@ -393,5 +522,31 @@ class _OrderTrackingModule extends FeatureModule {
   @override
   void init(ModularBridge bridge) {
     log.add(moduleName);
+  }
+}
+
+class _HealthModule extends FeatureModule {
+  _HealthModule({required this.moduleName, this.healthy = true, this.error});
+
+  final String moduleName;
+
+  final bool healthy;
+  final Object? error;
+  ModularBridge? seenBridge;
+  int healthCheckCalls = 0;
+
+  @override
+  String get name => moduleName;
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+
+  @override
+  FutureOr<bool> healthCheck(ModularBridge bridge) async {
+    healthCheckCalls++;
+    seenBridge = bridge;
+    await Future<void>.delayed(Duration.zero);
+    if (error != null) throw error!;
+    return healthy;
   }
 }

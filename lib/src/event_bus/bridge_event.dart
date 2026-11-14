@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import '../core/annotations.dart';
 
 /// Base class for all domain and cross-module events in `modular_bridge`.
 ///
@@ -13,7 +13,7 @@ import 'package:flutter/foundation.dart';
 ///   final String reason;
 /// }
 /// ```
-@immutable
+@immutable()
 abstract class BridgeEvent {
   /// Creates a [BridgeEvent] with an automatic [timestamp].
   BridgeEvent() : timestamp = DateTime.now();

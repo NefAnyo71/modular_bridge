@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
 import '../fixtures/test_fixtures.dart';
