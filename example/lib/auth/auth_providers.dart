@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:modular_bridge/modular_bridge.dart';
-import '../core/core_module.dart';
 import '../core/core_providers.dart';
 import 'auth_events.dart';
+import 'auth_module.dart';
 import 'auth_repository.dart';
 
 /// Immutable model representing the authentication state.
@@ -10,6 +10,16 @@ class AuthState {
   const AuthState({required this.isAuthenticated, this.email});
   final bool isAuthenticated;
   final String? email;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AuthState &&
+          other.isAuthenticated == isAuthenticated &&
+          other.email == email;
+
+  @override
+  int get hashCode => Object.hash(isAuthenticated, email);
 }
 
 /// Riverpod Notifier driving authentication state and listening to [BridgeEvent]s.
@@ -69,15 +79,9 @@ class MockOverrideNotifier extends Notifier<bool> {
     final bridge = ref.read(bridgeProvider);
     if (useMock) {
       // 1-line mock override
-      bridge.override<AuthRepository>(MockAuthRepository());
+      bridge.override<AuthRepository>(MockAuthRepository(bridge: bridge));
     } else {
-      bridge.override<AuthRepository>(
-        AuthRepositoryImpl(
-          apiClient: bridge.get<ApiClient>(),
-          logger: bridge.get<LoggingService>(),
-          bridge: bridge,
-        ),
-      );
+      bridge.override<AuthRepository>(createAuthRepository(bridge));
     }
     state = useMock;
     ref.invalidate(authProvider);
@@ -87,4 +91,3 @@ class MockOverrideNotifier extends Notifier<bool> {
 /// Provider exposing the active mock override state.
 final mockOverrideProvider =
     NotifierProvider<MockOverrideNotifier, bool>(MockOverrideNotifier.new);
-

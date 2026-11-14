@@ -32,6 +32,9 @@ class AuthRepositoryImpl implements AuthRepository {
 
   @override
   Future<void> login(String email, String password) async {
+    if (email.trim().isEmpty || password.isEmpty) {
+      throw ArgumentError('Email and password must not be empty.');
+    }
     logger.log('Authenticating $email against ${apiClient.baseUrl}...');
     await Future<void>.delayed(const Duration(milliseconds: 200));
     _currentEmail = email;
@@ -52,7 +55,14 @@ class AuthRepositoryImpl implements AuthRepository {
 }
 
 /// Mock implementation for unit tests or offline demonstration.
+///
+/// Accepts an optional [bridge]; defaults to [ModularBridge.instance] so it
+/// works both inside the app and inside isolated test containers.
 class MockAuthRepository implements AuthRepository {
+  MockAuthRepository({ModularBridge? bridge})
+      : _bridge = bridge ?? ModularBridge.I;
+
+  final ModularBridge _bridge;
   String? _email;
 
   @override
@@ -64,7 +74,7 @@ class MockAuthRepository implements AuthRepository {
   @override
   Future<void> login(String email, String password) async {
     _email = '[MOCK] $email';
-    ModularBridge.I.publish(
+    _bridge.publish(
       UserLoggedInEvent(userId: 'mock_user', email: _email!),
     );
   }
@@ -72,7 +82,6 @@ class MockAuthRepository implements AuthRepository {
   @override
   Future<void> logout() async {
     _email = null;
-    ModularBridge.I.publish(UserLoggedOutEvent(userId: 'mock_user'));
+    _bridge.publish(UserLoggedOutEvent(userId: 'mock_user'));
   }
 }
-

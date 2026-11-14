@@ -77,7 +77,7 @@ class _ModularBridgeProviderState extends State<ModularBridgeProvider> {
     super.didUpdateWidget(oldWidget);
     final newBridge = widget.bridge ?? ModularBridge.instance;
     if (_bridge != newBridge) {
-      _envSubscription?.cancel();
+      unawaited(_envSubscription?.cancel());
       _bridge = newBridge;
       _subscribe();
     }

@@ -8,6 +8,7 @@ final class BridgeSubscription {
   BridgeSubscription(
     this._subscription, {
     this.ownerId,
+    this.eventType,
     void Function(BridgeSubscription subscription)? onCancel,
   }) : _onCancel = onCancel;
 
@@ -16,6 +17,12 @@ final class BridgeSubscription {
 
   /// Optional identifier representing the subscriber or owning module.
   final String? ownerId;
+
+  /// The [BridgeEvent] type this subscription listens to, when known.
+  ///
+  /// Assigned automatically by [BridgeEventBus.subscribe]; `null` for
+  /// manually constructed subscriptions.
+  final Type? eventType;
 
   bool _isCanceled = false;
 
@@ -47,4 +54,3 @@ final class BridgeSubscription {
     await _subscription.cancel();
   }
 }
-

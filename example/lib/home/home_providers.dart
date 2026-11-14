@@ -8,6 +8,25 @@ class HomeFeedState {
   const HomeFeedState({required this.items, required this.isLoading});
   final List<String> items;
   final bool isLoading;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HomeFeedState &&
+          other.isLoading == isLoading &&
+          _listEquals(other.items, items);
+
+  @override
+  int get hashCode => Object.hash(isLoading, Object.hashAll(items));
+
+  static bool _listEquals(List<String> a, List<String> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 }
 
 /// Riverpod Notifier driving personalized home feed, decoupled from AuthModule.

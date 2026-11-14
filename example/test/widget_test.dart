@@ -10,7 +10,14 @@ import 'package:modular_bridge_example/home/home_module.dart';
 import 'package:modular_bridge_example/main.dart';
 
 void main() {
-  testWidgets('Example app boots and renders ModularBridge Showcase with all tabs', (WidgetTester tester) async {
+  tearDown(() async {
+    await ModularBridge.I.reset();
+    ModularBridge.resetInstance();
+  });
+
+  testWidgets(
+      'Example app boots and renders ModularBridge Showcase with all tabs',
+      (WidgetTester tester) async {
     final config = BridgeConfig(
       environment: BridgeEnvironment.dev,
       environmentValues: {

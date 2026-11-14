@@ -45,6 +45,14 @@ class ModularBridge {
     _instance = bridge;
   }
 
+  /// Resets the global instance to a fresh container.
+  ///
+  /// Useful in test `tearDown` blocks after [setMockInstance] was used.
+  @visibleForTesting
+  static void resetInstance() {
+    _instance = ModularBridge();
+  }
+
   BridgeConfig _config;
   final BridgeEventBus _eventBus;
 
@@ -61,6 +69,12 @@ class ModularBridge {
 
   /// Names of all currently registered modules.
   List<String> get activeModuleNames => _modules.keys.toList();
+
+  /// An unmodifiable snapshot of every registered [DependencyKey].
+  ///
+  /// Useful for debugging and introspection of the container state.
+  List<DependencyKey> get registeredDependencies =>
+      List<DependencyKey>.unmodifiable(_registry.keys);
 
   /// Updates or reinitializes the [BridgeConfig].
   void setConfig(BridgeConfig newConfig) {
@@ -83,7 +97,8 @@ class ModularBridge {
   }) {
     final key = DependencyKey(T, instanceName);
     if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T, instanceName: instanceName);
+      throw BridgeDependencyAlreadyRegisteredException(T,
+          instanceName: instanceName);
     }
 
     if (override && _registry.containsKey(key)) {
@@ -111,7 +126,8 @@ class ModularBridge {
   }) {
     final key = DependencyKey(T, instanceName);
     if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T, instanceName: instanceName);
+      throw BridgeDependencyAlreadyRegisteredException(T,
+          instanceName: instanceName);
     }
 
     if (override && _registry.containsKey(key)) {
@@ -137,7 +153,8 @@ class ModularBridge {
   }) {
     final key = DependencyKey(T, instanceName);
     if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T, instanceName: instanceName);
+      throw BridgeDependencyAlreadyRegisteredException(T,
+          instanceName: instanceName);
     }
 
     if (override && _registry.containsKey(key)) {
@@ -198,14 +215,12 @@ class ModularBridge {
     }
   }
 
-  /// Attempts to resolve an instance of type [T], returning `null` if not found.
+  /// Attempts to resolve an instance of type [T], returning `null` if it is
+  /// not registered. Errors raised while creating a registered dependency are
+  /// propagated to the caller.
   T? tryGet<T extends Object>({String? instanceName}) {
-    try {
-      if (!isRegistered<T>(instanceName: instanceName)) return null;
-      return get<T>(instanceName: instanceName);
-    } catch (_) {
-      return null;
-    }
+    if (!isRegistered<T>(instanceName: instanceName)) return null;
+    return get<T>(instanceName: instanceName);
   }
 
   /// Callable syntax shortcut for [get].
@@ -237,6 +252,8 @@ class ModularBridge {
   /// Registers and initializes a single [FeatureModule].
   ///
   /// Validates dependencies, registers bindings, and triggers [FeatureModule.init].
+  /// If registration or initialization fails, the module's resources and
+  /// dependencies are rolled back before the original error is rethrown.
   Future<void> registerModule(FeatureModule module) async {
     final moduleName = module.name;
     if (_modules.containsKey(moduleName)) {
@@ -256,15 +273,64 @@ class ModularBridge {
 
     _modules[moduleName] = module;
 
-    // Track dependencies registered by this module
-    _currentlyRegisteringModule = moduleName;
     try {
-      module.registerDependencies(this);
-    } finally {
-      _currentlyRegisteringModule = null;
+      _currentlyRegisteringModule = moduleName;
+      try {
+        module.registerDependencies(this);
+      } finally {
+        _currentlyRegisteringModule = null;
+      }
+
+      await module.init(this);
+    } catch (_) {
+      await _rollbackModuleRegistration(module);
+      rethrow;
+    }
+  }
+
+  Future<void> _rollbackModuleRegistration(FeatureModule module) async {
+    final moduleName = module.name;
+
+    try {
+      await module.dispose(this);
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'modular_bridge',
+          context: ErrorDescription(
+            'While rolling back failed module registration for $moduleName',
+          ),
+        ),
+      );
     }
 
-    await module.init(this);
+    try {
+      await _eventBus.cancelSubscriptionsForOwner(moduleName);
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'modular_bridge',
+          context: ErrorDescription(
+            'While canceling subscriptions for failed module $moduleName',
+          ),
+        ),
+      );
+    }
+
+    final keysToRemove = _registry.entries
+        .where((entry) => entry.value.ownerModuleName == moduleName)
+        .map((entry) => entry.key)
+        .toList();
+
+    for (final key in keysToRemove) {
+      _registry.remove(key)?.dispose();
+    }
+
+    _modules.remove(moduleName);
   }
 
   /// Sequentially registers and initializes multiple [FeatureModule] instances.
@@ -280,6 +346,8 @@ class ModularBridge {
   }
 
   /// Retrieves the registered module instance of type [M].
+  ///
+  /// Throws [BridgeModuleNotFoundException] if no module of type [M] is registered.
   M getModule<M extends FeatureModule>() {
     for (final module in _modules.values) {
       if (module is M) {
@@ -289,9 +357,46 @@ class ModularBridge {
     throw BridgeModuleNotFoundException(M.toString());
   }
 
+  /// Attempts to retrieve the registered module instance of type [M],
+  /// returning `null` if no module of type [M] is registered.
+  M? tryGetModule<M extends FeatureModule>() {
+    for (final module in _modules.values) {
+      if (module is M) {
+        return module;
+      }
+    }
+    return null;
+  }
+
+  /// Returns the names of registered modules that declare a module of type
+  /// [moduleType] in their [FeatureModule.dependencies].
+  List<String> moduleDependents(Type moduleType) {
+    return _modules.values
+        .where((m) => m.dependencies.contains(moduleType))
+        .map((m) => m.name)
+        .toList();
+  }
+
+  void _ensureNoDependents(FeatureModule module, {required bool force}) {
+    if (force) return;
+    final dependents = moduleDependents(module.runtimeType)
+        .where((n) => n != module.name)
+        .toList();
+    if (dependents.isNotEmpty) {
+      throw BridgeModuleInUseException(
+        moduleName: module.name,
+        dependentModules: dependents,
+      );
+    }
+  }
+
   /// Unregisters a module of type [M], triggering its dispose lifecycle and
   /// tearing down its registered dependencies and event subscriptions.
-  Future<void> unregisterModule<M extends FeatureModule>() async {
+  ///
+  /// Throws [BridgeModuleInUseException] if other registered modules declare
+  /// this module as a dependency, unless [force] is `true`.
+  Future<void> unregisterModule<M extends FeatureModule>(
+      {bool force = false}) async {
     final module = _modules.values.cast<FeatureModule?>().firstWhere(
           (m) => m is M,
           orElse: () => null,
@@ -301,15 +406,21 @@ class ModularBridge {
       throw BridgeModuleNotFoundException(M.toString());
     }
 
+    _ensureNoDependents(module, force: force);
     await _unregisterModuleInternal(module);
   }
 
   /// Unregisters a module by its identifier [moduleName].
-  Future<void> unregisterModuleByName(String moduleName) async {
+  ///
+  /// Throws [BridgeModuleInUseException] if other registered modules declare
+  /// this module as a dependency, unless [force] is `true`.
+  Future<void> unregisterModuleByName(String moduleName,
+      {bool force = false}) async {
     final module = _modules[moduleName];
     if (module == null) {
       throw BridgeModuleNotFoundException(moduleName);
     }
+    _ensureNoDependents(module, force: force);
     await _unregisterModuleInternal(module);
   }
 
@@ -393,4 +504,3 @@ class ModularBridge {
     await _eventBus.clearSubscriptions();
   }
 }
-

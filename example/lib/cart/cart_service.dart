@@ -13,6 +13,17 @@ class CartItem {
   final String id;
   final String name;
   final double price;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CartItem &&
+          other.id == id &&
+          other.name == name &&
+          other.price == price;
+
+  @override
+  int get hashCode => Object.hash(id, name, price);
 }
 
 /// Service managing cart items, calculating totals, and broadcasting cart events.
@@ -54,4 +65,3 @@ class CartService extends ChangeNotifier {
     _bridge.publish(CartClearedEvent(reason: reason));
   }
 }
-

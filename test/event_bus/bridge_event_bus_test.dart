@@ -1,0 +1,132 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:modular_bridge/modular_bridge.dart';
+
+import '../fixtures/test_fixtures.dart';
+
+void main() {
+  group('BridgeEventBus', () {
+    late BridgeEventBus eventBus;
+
+    setUp(() {
+      eventBus = BridgeEventBus();
+    });
+
+    tearDown(() async {
+      await eventBus.dispose();
+    });
+
+    test('publishes and receives strongly typed events', () async {
+      final receivedLogins = <UserLoggedInEvent>[];
+      final receivedLogouts = <UserLoggedOutEvent>[];
+
+      eventBus.subscribe<UserLoggedInEvent>((e) => receivedLogins.add(e));
+      eventBus.subscribe<UserLoggedOutEvent>((e) => receivedLogouts.add(e));
+
+      eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'u1@test.com'));
+      eventBus.publish(UserLoggedOutEvent(userId: 'u1'));
+      eventBus.publish(OrderPlacedEvent(orderId: 'ord_999'));
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(receivedLogins.length, 1);
+      expect(receivedLogins.first.userId, 'u1');
+      expect(receivedLogouts.length, 1);
+      expect(receivedLogouts.first.userId, 'u1');
+    });
+
+    test('on<T>() stream only emits events of the requested type', () async {
+      final events = <String>[];
+      final sub = eventBus.on<UserLoggedInEvent>().listen(
+            (e) => events.add(e.email),
+          );
+      addTearDown(sub.cancel);
+
+      eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'one@test.com'));
+      eventBus.publish(UserLoggedOutEvent(userId: 'u1'));
+      eventBus.publish(UserLoggedInEvent(userId: 'u2', email: 'two@test.com'));
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, ['one@test.com', 'two@test.com']);
+    });
+
+    test('canceling a BridgeSubscription stops event delivery', () async {
+      var callCount = 0;
+      final sub = eventBus.subscribe<UserLoggedInEvent>((_) => callCount++);
+
+      eventBus.publish(UserLoggedInEvent(userId: '1', email: 'a@b.com'));
+      await Future<void>.delayed(Duration.zero);
+      expect(callCount, 1);
+
+      await sub.cancel();
+      expect(sub.isCanceled, isTrue);
+
+      eventBus.publish(UserLoggedInEvent(userId: '2', email: 'c@d.com'));
+      await Future<void>.delayed(Duration.zero);
+      expect(callCount, 1); // Unchanged
+    });
+
+    test('cancels all subscriptions for a specific ownerId', () async {
+      var mod1Count = 0;
+      var mod2Count = 0;
+
+      eventBus.subscribe<UserLoggedOutEvent>((_) => mod1Count++,
+          ownerId: 'Module1');
+      eventBus.subscribe<UserLoggedOutEvent>((_) => mod2Count++,
+          ownerId: 'Module2');
+
+      eventBus.publish(UserLoggedOutEvent(userId: '1'));
+      await Future<void>.delayed(Duration.zero);
+      expect(mod1Count, 1);
+      expect(mod2Count, 1);
+
+      // Cancel only Module1
+      await eventBus.cancelSubscriptionsForOwner('Module1');
+
+      eventBus.publish(UserLoggedOutEvent(userId: '2'));
+      await Future<void>.delayed(Duration.zero);
+      expect(mod1Count, 1); // Not called
+      expect(mod2Count, 2); // Still called
+    });
+
+    test('hasListeners reports active subscriptions per event type', () async {
+      expect(eventBus.hasListeners<UserLoggedInEvent>(), isFalse);
+
+      final sub = eventBus.subscribe<UserLoggedInEvent>((_) {});
+      expect(eventBus.hasListeners<UserLoggedInEvent>(), isTrue);
+      expect(eventBus.hasListeners<UserLoggedOutEvent>(), isFalse);
+
+      await sub.cancel();
+      expect(eventBus.hasListeners<UserLoggedInEvent>(), isFalse);
+    });
+
+    test('activeSubscriptionCount reflects live subscriptions', () async {
+      expect(eventBus.activeSubscriptionCount, 0);
+
+      final sub1 = eventBus.subscribe<UserLoggedInEvent>((_) {});
+      eventBus.subscribe<UserLoggedOutEvent>((_) {});
+      expect(eventBus.activeSubscriptionCount, 2);
+
+      await sub1.cancel();
+      expect(eventBus.activeSubscriptionCount, 1);
+
+      await eventBus.clearSubscriptions();
+      expect(eventBus.activeSubscriptionCount, 0);
+    });
+
+    test('disposed bus rejects new subscriptions and ignores publishes',
+        () async {
+      await eventBus.dispose();
+
+      expect(eventBus.isDisposed, isTrue);
+      expect(
+        () => eventBus.subscribe<UserLoggedInEvent>((_) {}),
+        throwsA(isA<StateError>()),
+      );
+      expect(eventBus.on<UserLoggedInEvent>(), emitsDone);
+
+      // Publish must be a safe no-op, not a crash.
+      eventBus.publish(UserLoggedInEvent(userId: '1', email: 'a@b.com'));
+    });
+  });
+}

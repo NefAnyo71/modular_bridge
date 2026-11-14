@@ -207,6 +207,26 @@ await ModularBridge.I.registerModules([
 ]);
 ```
 
+If a module throws during dependency registration or `init`, its subscriptions
+and registered dependencies are cleaned up and the original error is rethrown.
+
+#### Optional Dependencies and Module Initialization Errors
+```dart
+final bridge = ModularBridge.I;
+
+// Returns null only when no AnalyticsService is registered.
+final analytics = bridge.tryGet<AnalyticsService>();
+analytics?.trackScreen('home');
+
+try {
+  await bridge.registerModule(ReportsModule());
+} on StateError catch (error) {
+  // Failed module registrations are rolled back before the original error
+  // reaches this handler.
+  print('Reports module failed to initialize: $error');
+}
+```
+
 ---
 
 ### 3. Decoupled Event Bus (`BridgeEventBus`)
@@ -591,6 +611,7 @@ try {
 | `bridge.registerFactory<T>(() => T())` | Registers a factory producing a fresh instance on every call |
 | `bridge.override<T>(mock)` | Replaces an existing dependency with a mock instance in one line |
 | `bridge.get<T>()` or `bridge<T>()` | Resolves the dependency of type `T` (or throws `BridgeDependencyException`) |
+| `bridge.tryGet<T>()` | Returns `null` only when `T` is not registered; dependency creation errors propagate |
 | `bridge.publish<E>(event)` | Broadcasts a strongly-typed domain event to all active listeners |
 | `bridge.on<E>()` | Subscribes to an event stream of type `E` |
 | `module.subscribe<E>(bridge, onData)` | Scoped subscription **automatically cancelled** when the module is disposed |

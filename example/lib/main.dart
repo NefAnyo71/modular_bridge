@@ -17,6 +17,15 @@ import 'home/home_providers.dart';
 /// Riverpod StateProvider tracking the active bottom navigation tab index.
 final selectedTabProvider = StateProvider<int>((ref) => 0);
 
+/// Builds a fresh list of all feature modules in dependency-safe order.
+List<FeatureModule> buildFeatureModules() => [
+      CoreModule(),
+      AnalyticsModule(),
+      AuthModule(),
+      HomeModule(),
+      CartModule(),
+    ];
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -25,7 +34,7 @@ void main() async {
     environment: BridgeEnvironment.dev,
     commonValues: {
       'appName': 'ModularBridge Riverpod Showcase',
-      'version': '1.0.0',
+      'version': '0.2.0',
     },
     environmentValues: {
       BridgeEnvironment.dev: {
@@ -52,13 +61,7 @@ void main() async {
   ModularBridge.I.setConfig(config);
 
   // 2. Register feature modules in decoupled order
-  await ModularBridge.I.registerModules([
-    CoreModule(),
-    AnalyticsModule(),
-    AuthModule(),
-    HomeModule(),
-    CartModule(),
-  ]);
+  await ModularBridge.I.registerModules(buildFeatureModules());
 
   runApp(
     const ProviderScope(
@@ -169,14 +172,17 @@ class ShowcaseScreen extends ConsumerWidget {
             tooltip: 'Reset and Reinitialize Bridge',
             icon: const Icon(Icons.refresh),
             onPressed: () async {
-              await bridge.reset();
-              await bridge.registerModules([
-                CoreModule(),
-                AnalyticsModule(),
-                AuthModule(),
-                HomeModule(),
-                CartModule(),
-              ]);
+              try {
+                await bridge.reset();
+                await bridge.registerModules(buildFeatureModules());
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Reset failed: $e')),
+                  );
+                }
+                return;
+              }
               ref.invalidate(environmentProvider);
               ref.invalidate(modulesProvider);
               ref.invalidate(authProvider);
@@ -187,7 +193,8 @@ class ShowcaseScreen extends ConsumerWidget {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('ModularBridge container reset & Riverpod refreshed!'),
+                    content: Text(
+                        'ModularBridge container reset & Riverpod refreshed!'),
                     duration: Duration(seconds: 2),
                   ),
                 );
@@ -285,7 +292,8 @@ class _AppFlowTab extends ConsumerWidget {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -301,7 +309,8 @@ class _AppFlowTab extends ConsumerWidget {
                         SizedBox(width: 8),
                         Text(
                           'AuthModule (DI & Events)',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                       ],
                     ),
@@ -326,7 +335,9 @@ class _AppFlowTab extends ConsumerWidget {
                       : '● Active: AuthRepositoryImpl (Real dependency)',
                   style: TextStyle(
                     fontSize: 12,
-                    color: isMockActive ? Colors.deepOrange : Colors.green.shade700,
+                    color: isMockActive
+                        ? Colors.deepOrange
+                        : Colors.green.shade700,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -374,7 +385,8 @@ class _AppFlowTab extends ConsumerWidget {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -386,11 +398,13 @@ class _AppFlowTab extends ConsumerWidget {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.shopping_cart_outlined, color: Colors.teal),
+                        const Icon(Icons.shopping_cart_outlined,
+                            color: Colors.teal),
                         const SizedBox(width: 8),
                         Text(
                           'CartModule ($cartCount items)',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                       ],
                     ),
@@ -420,26 +434,33 @@ class _AppFlowTab extends ConsumerWidget {
                       avatar: const Icon(Icons.add, size: 16),
                       label: const Text('Flutter Hoodie (\$49)'),
                       onPressed: () {
-                        ref.read(cartProvider.notifier).addItem('Flutter Hoodie', 49.0);
+                        ref
+                            .read(cartProvider.notifier)
+                            .addItem('Flutter Hoodie', 49.0);
                       },
                     ),
                     ActionChip(
                       avatar: const Icon(Icons.add, size: 16),
                       label: const Text('Dart Mug (\$15)'),
                       onPressed: () {
-                        ref.read(cartProvider.notifier).addItem('Dart Mug', 15.0);
+                        ref
+                            .read(cartProvider.notifier)
+                            .addItem('Dart Mug', 15.0);
                       },
                     ),
                     ActionChip(
                       avatar: const Icon(Icons.add, size: 16),
                       label: const Text('Dev Laptop (\$1,299)'),
                       onPressed: () {
-                        ref.read(cartProvider.notifier).addItem('Dev Laptop', 1299.0);
+                        ref
+                            .read(cartProvider.notifier)
+                            .addItem('Dev Laptop', 1299.0);
                       },
                     ),
                     if (cartCount > 0)
                       ActionChip(
-                        avatar: const Icon(Icons.clear_all, size: 16, color: Colors.red),
+                        avatar: const Icon(Icons.clear_all,
+                            size: 16, color: Colors.red),
                         label: const Text('Clear Cart'),
                         onPressed: () {
                           ref.read(cartProvider.notifier).clear();
@@ -455,10 +476,12 @@ class _AppFlowTab extends ConsumerWidget {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('• ${item.name}', style: const TextStyle(fontSize: 13)),
+                          Text('• ${item.name}',
+                              style: const TextStyle(fontSize: 13)),
                           Text(
                             '\$${item.price.toStringAsFixed(2)}',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
                           ),
                         ],
                       ),
@@ -477,7 +500,8 @@ class _AppFlowTab extends ConsumerWidget {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -490,7 +514,8 @@ class _AppFlowTab extends ConsumerWidget {
                     SizedBox(width: 8),
                     Text(
                       'HomeModule (Riverpod Stream Feed)',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                   ],
                 ),
@@ -522,7 +547,8 @@ class _AppFlowTab extends ConsumerWidget {
                     (item) => ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.check_circle_outline, color: Colors.teal, size: 20),
+                      leading: const Icon(Icons.check_circle_outline,
+                          color: Colors.teal, size: 20),
                       title: Text(item, style: const TextStyle(fontSize: 13)),
                     ),
                   ),
@@ -607,7 +633,8 @@ class _EventConsoleTab extends ConsumerWidget {
                       leading: CircleAvatar(
                         radius: 14,
                         backgroundColor: Colors.indigo.shade50,
-                        child: const Icon(Icons.bolt, size: 16, color: Colors.indigo),
+                        child: const Icon(Icons.bolt,
+                            size: 16, color: Colors.indigo),
                       ),
                       title: Row(
                         children: [
@@ -622,13 +649,15 @@ class _EventConsoleTab extends ConsumerWidget {
                           const Spacer(),
                           Text(
                             timeString,
-                            style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            style: const TextStyle(
+                                fontSize: 11, color: Colors.grey),
                           ),
                         ],
                       ),
                       subtitle: Text(
                         entry.summary,
-                        style: const TextStyle(fontSize: 12, color: Colors.black87),
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.black87),
                       ),
                     );
                   },
@@ -650,11 +679,27 @@ class _ModuleInspectorTab extends ConsumerWidget {
     final activeModules = ref.watch(modulesProvider);
 
     final moduleDefinitions = [
-      ('CoreModule', 'Infrastructure, ApiClient, LoggingService', () => CoreModule()),
-      ('AnalyticsModule', 'Event bus listener & live console recorder', () => AnalyticsModule()),
-      ('AuthModule', 'Authentication state and login/logout events', () => AuthModule()),
+      (
+        'CoreModule',
+        'Infrastructure, ApiClient, LoggingService',
+        () => CoreModule()
+      ),
+      (
+        'AnalyticsModule',
+        'Event bus listener & live console recorder',
+        () => AnalyticsModule()
+      ),
+      (
+        'AuthModule',
+        'Authentication state and login/logout events',
+        () => AuthModule()
+      ),
       ('HomeModule', 'Decoupled consumer of user events', () => HomeModule()),
-      ('CartModule', 'Decoupled shopping cart with auto-clear', () => CartModule()),
+      (
+        'CartModule',
+        'Decoupled shopping cart with auto-clear',
+        () => CartModule()
+      ),
     ];
 
     return ListView(
@@ -692,7 +737,8 @@ class _ModuleInspectorTab extends ConsumerWidget {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
               side: BorderSide(
-                color: isRegistered ? Colors.green.shade300 : Colors.grey.shade300,
+                color:
+                    isRegistered ? Colors.green.shade300 : Colors.grey.shade300,
               ),
             ),
             child: ListTile(
@@ -700,19 +746,35 @@ class _ModuleInspectorTab extends ConsumerWidget {
                 isRegistered ? Icons.check_circle : Icons.pause_circle_outline,
                 color: isRegistered ? Colors.green : Colors.grey,
               ),
-              title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              title: Text(name,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               subtitle: Text(description, style: const TextStyle(fontSize: 12)),
               trailing: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isRegistered ? Colors.red.shade50 : Colors.green.shade50,
-                  foregroundColor: isRegistered ? Colors.red : Colors.green.shade800,
+                  backgroundColor:
+                      isRegistered ? Colors.red.shade50 : Colors.green.shade50,
+                  foregroundColor:
+                      isRegistered ? Colors.red : Colors.green.shade800,
                   elevation: 0,
                 ),
                 onPressed: () async {
-                  if (isRegistered) {
-                    await ref.read(modulesProvider.notifier).unloadModule(name);
-                  } else {
-                    await ref.read(modulesProvider.notifier).loadModule(factory());
+                  try {
+                    if (isRegistered) {
+                      await ref
+                          .read(modulesProvider.notifier)
+                          .unloadModule(name);
+                    } else {
+                      await ref
+                          .read(modulesProvider.notifier)
+                          .loadModule(factory());
+                    }
+                  } on BridgeException catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(e.message)),
+                      );
+                    }
+                    return;
                   }
                   ref.invalidate(authProvider);
                   ref.invalidate(cartProvider);
@@ -738,6 +800,8 @@ class _ConfigStudioTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final environment = ref.watch(environmentProvider);
     final config = ref.watch(bridgeProvider).config;
+    // Rebuild whenever any config value changes (set/remove/environment switch).
+    ref.watch(configChangesProvider);
 
     return ListView(
       padding: const EdgeInsets.all(16.0),
@@ -747,7 +811,8 @@ class _ConfigStudioTab extends ConsumerWidget {
           color: Theme.of(context).colorScheme.primaryContainer.withAlpha(60),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -799,7 +864,8 @@ class _ConfigStudioTab extends ConsumerWidget {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -811,11 +877,13 @@ class _ConfigStudioTab extends ConsumerWidget {
                   children: [
                     const Text(
                       'Type-Safe Config Parameters',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                     IconButton(
                       tooltip: 'Add Custom Key at Runtime',
-                      icon: const Icon(Icons.add_circle_outline, color: Colors.indigo),
+                      icon: const Icon(Icons.add_circle_outline,
+                          color: Colors.indigo),
                       onPressed: () => _showAddKeyDialog(context, ref),
                     ),
                   ],
@@ -829,7 +897,8 @@ class _ConfigStudioTab extends ConsumerWidget {
                       children: [
                         Text(
                           entry.key,
-                          style: const TextStyle(fontSize: 13, color: Colors.black87),
+                          style: const TextStyle(
+                              fontSize: 13, color: Colors.black87),
                         ),
                         Text(
                           entry.value.toString(),
@@ -864,11 +933,13 @@ class _ConfigStudioTab extends ConsumerWidget {
           children: [
             TextField(
               controller: keyController,
-              decoration: const InputDecoration(labelText: 'Config Key (e.g. promoCode)'),
+              decoration: const InputDecoration(
+                  labelText: 'Config Key (e.g. promoCode)'),
             ),
             TextField(
               controller: valueController,
-              decoration: const InputDecoration(labelText: 'Value (e.g. SUMMER2026)'),
+              decoration:
+                  const InputDecoration(labelText: 'Value (e.g. SUMMER2026)'),
             ),
           ],
         ),
@@ -880,12 +951,9 @@ class _ConfigStudioTab extends ConsumerWidget {
           ElevatedButton(
             onPressed: () {
               if (keyController.text.isNotEmpty) {
-                ref
-                    .read(bridgeProvider)
-                    .config
-                    .set(keyController.text.trim(), valueController.text.trim());
+                ref.read(bridgeProvider).config.set(
+                    keyController.text.trim(), valueController.text.trim());
                 Navigator.pop(ctx);
-                ref.invalidate(environmentProvider);
               }
             },
             child: const Text('Save'),

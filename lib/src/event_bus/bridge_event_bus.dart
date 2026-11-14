@@ -24,6 +24,10 @@ class BridgeEventBus {
   /// The number of currently active subscriptions.
   int get activeSubscriptionCount => _activeSubscriptions.length;
 
+  /// Whether at least one active subscription listens to events of type [T].
+  bool hasListeners<T extends BridgeEvent>() =>
+      _activeSubscriptions.any((sub) => sub.eventType == T);
+
   /// Publishes a [BridgeEvent] to all active subscribers of type [T].
   void publish<T extends BridgeEvent>(T event) {
     if (_isDisposed) {
@@ -71,6 +75,7 @@ class BridgeEventBus {
     bridgeSub = BridgeSubscription(
       rawSub,
       ownerId: ownerId,
+      eventType: T,
       onCancel: (sub) {
         _activeSubscriptions.remove(sub);
       },
@@ -82,9 +87,8 @@ class BridgeEventBus {
 
   /// Cancels all subscriptions created under the given [ownerId].
   Future<void> cancelSubscriptionsForOwner(String ownerId) async {
-    final toCancel = _activeSubscriptions
-        .where((sub) => sub.ownerId == ownerId)
-        .toList();
+    final toCancel =
+        _activeSubscriptions.where((sub) => sub.ownerId == ownerId).toList();
 
     for (final sub in toCancel) {
       await sub.cancel();
@@ -108,4 +112,3 @@ class BridgeEventBus {
     await _eventController.close();
   }
 }
-

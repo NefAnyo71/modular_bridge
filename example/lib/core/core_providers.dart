@@ -26,12 +26,7 @@ class EnvironmentNotifier extends Notifier<BridgeEnvironment> {
 
     // Reconfigure ApiClient for the newly active flavor
     bridge.unregister<ApiClient>();
-    bridge.registerLazySingleton<ApiClient>(() {
-      return ApiClient(
-        baseUrl: bridge.config.getString('apiBaseUrl'),
-        timeout: bridge.config.getDuration('apiTimeout'),
-      );
-    });
+    bridge.registerLazySingleton<ApiClient>(() => createApiClient(bridge));
 
     state = newEnv;
   }
@@ -71,3 +66,9 @@ final modulesProvider = NotifierProvider<ModulesNotifier, List<String>>(
   ModulesNotifier.new,
 );
 
+/// Stream provider emitting whenever any [BridgeConfig] value changes
+/// (`set`, `setAll`, `remove`, or environment switch).
+final configChangesProvider = StreamProvider<void>((ref) {
+  final bridge = ref.watch(bridgeProvider);
+  return bridge.config.onChanged;
+});

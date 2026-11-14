@@ -157,6 +157,25 @@ final class BridgeModuleNotFoundException extends BridgeModuleException {
         );
 }
 
+/// Thrown when unregistering a [FeatureModule] that other registered modules
+/// still declare as a dependency.
+final class BridgeModuleInUseException extends BridgeModuleException {
+  /// Creates a [BridgeModuleInUseException].
+  BridgeModuleInUseException({
+    required String moduleName,
+    required List<String> dependentModules,
+  })  : dependentModules = List.unmodifiable(dependentModules),
+        super(
+          'FeatureModule \'$moduleName\' cannot be unregistered because it is '
+          'required by: ${dependentModules.join(', ')}. Unregister the dependent '
+          'modules first or pass `force: true` to unregister anyway.',
+          moduleName: moduleName,
+        );
+
+  /// Names of the registered modules that depend on the module being unregistered.
+  final List<String> dependentModules;
+}
+
 /// Thrown when module dependencies are not satisfied.
 final class BridgeModuleMissingDependencyException
     extends BridgeModuleException {

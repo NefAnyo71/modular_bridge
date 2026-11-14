@@ -12,6 +12,17 @@ class ApiClient {
   }
 }
 
+/// Builds an [ApiClient] from the bridge's active [BridgeConfig].
+///
+/// Shared by [CoreModule] registration and environment hot-switch reconfiguration
+/// so both paths always produce identically configured clients.
+ApiClient createApiClient(ModularBridge bridge) {
+  return ApiClient(
+    baseUrl: bridge.config.getString('apiBaseUrl'),
+    timeout: bridge.config.getDuration('apiTimeout'),
+  );
+}
+
 /// Core logging service.
 class LoggingService {
   void log(String message) {
@@ -31,11 +42,6 @@ final class CoreModule extends FeatureModule {
     bridge.registerSingleton<LoggingService>(LoggingService());
 
     // Lazy singleton using type-safe environment configuration values
-    bridge.registerLazySingleton<ApiClient>(() {
-      final baseUrl = bridge.config.getString('apiBaseUrl');
-      final timeout = bridge.config.getDuration('apiTimeout');
-      return ApiClient(baseUrl: baseUrl, timeout: timeout);
-    });
+    bridge.registerLazySingleton<ApiClient>(() => createApiClient(bridge));
   }
 }
-
