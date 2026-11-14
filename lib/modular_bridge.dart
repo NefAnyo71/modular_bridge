@@ -6,6 +6,7 @@ library;
 export 'src/core/container/dependency_descriptor.dart'
     show DependencyKey, DependencyLifecycle;
 export 'src/core/container/modular_bridge_container.dart' show ModularBridge;
+export 'src/core/container/bridge_scope.dart' show BridgeScope;
 
 // Exceptions
 export 'src/core/exceptions/bridge_exceptions.dart';

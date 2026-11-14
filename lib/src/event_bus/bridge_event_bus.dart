@@ -16,6 +16,7 @@ class BridgeEventBus {
 
   final StreamController<BridgeEvent> _eventController;
   final List<BridgeSubscription> _activeSubscriptions = [];
+  final Map<Type, BridgeEvent> _lastEvents = {};
   bool _isDisposed = false;
 
   /// Whether the event bus has been disposed.
@@ -25,6 +26,10 @@ class BridgeEventBus {
   int get activeSubscriptionCount => _activeSubscriptions.length;
 
   /// Whether at least one active subscription listens to events of type [T].
+  ///
+  /// Note: this performs an exact-type match against the subscription's
+  /// declared event type. Catch-all subscriptions on [BridgeEvent] receive
+  /// every event but are **not** counted for specific types.
   bool hasListeners<T extends BridgeEvent>() =>
       _activeSubscriptions.any((sub) => sub.eventType == T);
 
@@ -38,6 +43,7 @@ class BridgeEventBus {
       }
       return;
     }
+    _lastEvents[event.runtimeType] = event;
     _eventController.add(event);
   }
 
@@ -47,6 +53,79 @@ class BridgeEventBus {
       return const Stream.empty();
     }
     return _eventController.stream.where((event) => event is T).cast<T>();
+  }
+
+  BridgeEvent? _latestMatching<T extends BridgeEvent>() {
+    BridgeEvent? best;
+    for (final event in _lastEvents.values) {
+      if (event is T &&
+          (best == null || event.timestamp.isAfter(best.timestamp))) {
+        best = event;
+      }
+    }
+    return best;
+  }
+
+  /// Returns a broadcast [Stream] that first replays the most recently
+  /// published event assignable to [T] (if any), then continues with live
+  /// events — similar to a BehaviorSubject.
+  ///
+  /// Each listener receives the replay independently at subscription time.
+  Stream<T> onLatest<T extends BridgeEvent>() {
+    if (_isDisposed) {
+      return const Stream.empty();
+    }
+    return Stream<T>.multi((controller) {
+      if (_isDisposed) {
+        controller.closeSync();
+        return;
+      }
+      final last = _latestMatching<T>();
+      if (last != null) {
+        controller.addSync(last as T);
+      }
+      final rawSub =
+          _eventController.stream.where((event) => event is T).cast<T>().listen(
+                controller.addSync,
+                onError: controller.addErrorSync,
+                onDone: controller.closeSync,
+              );
+      controller.onCancel = rawSub.cancel;
+    });
+  }
+
+  /// Completes with the next published event of type [T].
+  ///
+  /// Throws a [TimeoutException] if [timeout] elapses before a matching
+  /// event arrives. The underlying subscription is always cleaned up.
+  Future<T> once<T extends BridgeEvent>({Duration? timeout}) async {
+    final completer = Completer<T>();
+    final subscription = subscribe<T>((event) {
+      if (!completer.isCompleted) {
+        completer.complete(event);
+      }
+    });
+
+    Timer? timer;
+    if (timeout != null) {
+      timer = Timer(timeout, () {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            TimeoutException(
+              'Timed out after ${timeout.inMilliseconds}ms waiting for $T.',
+              timeout,
+            ),
+          );
+        }
+      });
+    }
+
+    try {
+      return await completer.future;
+    } finally {
+      timer?.cancel();
+      await subscription.cancel();
+    }
   }
 
   /// Subscribes to events of type [T] with a managed [BridgeSubscription].

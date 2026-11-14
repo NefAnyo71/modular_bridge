@@ -168,7 +168,8 @@ class BridgeConfig {
     Map<String, dynamic>? runtimeOverrides,
   }) {
     _ensureNotDisposed();
-    if (_environment == newEnvironment && runtimeOverrides == null) return;
+    final envChanged = _environment != newEnvironment;
+    if (!envChanged && runtimeOverrides == null) return;
 
     _environment = newEnvironment;
     if (runtimeOverrides != null) {
@@ -176,7 +177,11 @@ class BridgeConfig {
     }
     _rebuildActiveConfig();
 
-    _envStreamController.add(_environment);
+    // Only emit the environment event when the environment actually changed;
+    // runtime-only updates still notify via onChanged.
+    if (envChanged) {
+      _envStreamController.add(_environment);
+    }
     _changeController.add(null);
   }
 
@@ -280,6 +285,43 @@ class BridgeConfig {
     final result = _lookup(key, defaultValue);
     if (!result.found) return result.value as Duration;
     return _asDuration(key, result.value);
+  }
+
+  /// Retrieves an unmodifiable [Map] configuration value for [key].
+  ///
+  /// Throws [BridgeConfigKeyNotFoundException] if [key] is absent and no
+  /// [defaultValue] is given, and [BridgeConfigTypeMismatchException] if the
+  /// stored value is not a [Map].
+  Map<String, dynamic> getMap(String key,
+      {Map<String, dynamic>? defaultValue}) {
+    final result = _lookup(key, defaultValue);
+    if (!result.found) {
+      return Map<String, dynamic>.unmodifiable(result.value as Map);
+    }
+    final value = result.value;
+    if (value is Map) {
+      return Map<String, dynamic>.unmodifiable(
+          Map<String, dynamic>.from(value));
+    }
+    throw _typeMismatch(key, Map<String, dynamic>, value);
+  }
+
+  /// Decodes a nested map stored under [key] into a typed object [T] using
+  /// [decoder].
+  ///
+  /// ```dart
+  /// final api = config.getSection<ApiConfig>(
+  ///   'api',
+  ///   (m) => ApiConfig(baseUrl: m['baseUrl'] as String),
+  /// );
+  /// ```
+  ///
+  /// Throws [BridgeConfigKeyNotFoundException] if [key] is absent.
+  T getSection<T>(
+    String key,
+    T Function(Map<String, dynamic> values) decoder,
+  ) {
+    return decoder(getMap(key));
   }
 
   /// Retrieves a [Uri] configuration value for [key].

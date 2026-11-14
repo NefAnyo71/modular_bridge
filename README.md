@@ -1,9 +1,10 @@
 # Modular Bridge 🌉
 
-[![pub package](https://img.shields.io/badge/pub-v0.1.0-blue.svg)](https://pub.dev)
+[![pub package](https://img.shields.io/pub/v/modular_bridge.svg)](https://pub.dev/packages/modular_bridge)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Flutter 3.0+](https://img.shields.io/badge/Flutter-3.0+-02569B.svg?logo=flutter)](https://flutter.dev)
 [![Dart 3.0+](https://img.shields.io/badge/Dart-3.0+-0175C2.svg?logo=dart)](https://dart.dev)
+[![CI](https://github.com/NefAnyo71/modular_bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/NefAnyo71/modular_bridge/actions)
 
 
 **Modular Bridge** is a lightweight, high-performance, and **zero-external-dependency** architectural framework for large-scale, modular (Clean Architecture / Feature-first) Flutter projects. It solves **cross-module dependency injection, type-safe flavor/environment leakage, and decoupled event-driven communication** while preventing memory leaks out of the box.
@@ -21,6 +22,7 @@
   - [3. Decoupled Event Bus (`BridgeEventBus`)](#3-decoupled-event-bus-bridgeeventbus)
   - [4. Flutter Widget Tree Integration (`BuildContext` Extensions)](#4-flutter-widget-tree-integration-buildcontext-extensions)
   - [5. Testability & 1-Line Mock Overrides](#5-testability--1-line-mock-overrides)
+  - [6. Advanced Capabilities](#6-advanced-capabilities)
 - [Full End-to-End Runnable Example](#-full-end-to-end-runnable-example)
 - [Error Handling (Sealed Exceptions)](#-error-handling-sealed-exceptions)
 - [API Reference Cheat Sheet](#-api-reference-cheat-sheet)
@@ -43,6 +45,8 @@ In enterprise Flutter applications, as modules (`AuthModule`, `CartModule`, `Pay
 - ✅ **Type-Safe Environment & Hot-Switching:** Strictly typed accessors (`getString`, `getInt`, `getDuration`, etc.) with instant compile-time/runtime verification and runtime hot-switch capability.
 - ✅ **Decoupled Event Bus:** Modules communicate exclusively through strongly-typed domain events, without importing each other's internal concrete classes.
 - ✅ **1-Line Mock Overrides:** Swap any registered dependency with a mock or fake via `bridge.override<T>(mockInstance)` in a single line.
+- ✅ **Async-Ready DI & Request Scopes:** `registerAsyncSingleton`/`getAsync` for asynchronous resources, plus `BridgeScope` for per-request/session dependencies that dispose together.
+- ✅ **Rich Event Primitives:** Type-safe publish/subscribe with auto-disposal, `onLatest` replay, and `once<T>()` one-shot waits.
 
 ---
 
@@ -85,7 +89,7 @@ Add `modular_bridge` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_bridge: ^0.1.0
+  modular_bridge: ^0.4.0
 ```
 
 Fetch the package:
@@ -355,6 +359,67 @@ void main() {
 
 ---
 
+### 6. Advanced Capabilities
+
+#### Async Dependencies (`getAsync`)
+
+Dependencies backed by asynchronous resources (database connections, remote config, etc.) use `registerAsyncSingleton` and are resolved with `getAsync`. Concurrent calls share a single in-flight resolution, failed resolutions are retried automatically, and circular async chains are detected without deadlocking:
+
+```dart
+// Inside a FeatureModule:
+bridge.registerAsyncSingleton<DatabaseClient>(
+  () async => DatabaseClient.connect(config.databaseUrl),
+  onDispose: (client) => client.close(),
+);
+
+// Anywhere:
+final db = await bridge.getAsync<DatabaseClient>();
+final maybe = await bridge.tryGetAsync<FeatureFlags>();
+```
+
+Calling `bridge.get<DatabaseClient>()` on an async dependency throws `BridgeAsyncDependencyException`.
+
+#### Request/Session Scopes (`BridgeScope`)
+
+`bridge.createScope()` creates an isolated registration context for per-request or per-session state. Scoped dependencies are invisible to `bridge.get` and to other scopes, fall back to the parent container for unregistered types, and are all disposed together:
+
+```dart
+final scope = bridge.createScope();
+scope.registerSingleton<RequestContext>(RequestContext(userId: user.id));
+scope.registerLazySingleton<CheckoutSession>(() => CheckoutSession(scope.get<CartService>()));
+
+// ... handle the request ...
+await scope.dispose(); // disposes every scoped dependency
+```
+
+#### Event Replay & One-Shot Waits
+
+`onLatest<T>()` replays the most recent matching event to each new listener (BehaviorSubject-style), and `once<T>()` completes with the next event or a `TimeoutException`:
+
+```dart
+// Replay latest auth state to a freshly opened screen:
+bridge.onLatest<UserLoggedInEvent>().listen((e) => showWelcome(e.email));
+
+// Wait for a one-time event:
+final event = await bridge.once<OrderPlacedEvent>(
+  timeout: const Duration(seconds: 30),
+);
+```
+
+#### Modules-Ready Hook & Leak Inspection
+
+`bridge.onModulesReady(callback)` fires whenever the module set becomes ready — after `registerModule(s)` completes — and re-arms when all modules are unregistered. In tests, `bridge.debugLeakReport()` / `bridge.assertNoLeaks()` surface leftover resolution state or subscriptions:
+
+```dart
+bridge.onModulesReady((b) {
+  // All modules initialized — safe to start background work.
+});
+```
+
+`BridgeConfig` also gained `onChanged` (reactive config stream), `remove(key)` for runtime overrides, persistent `set`/`setAll` overrides across environment switches, and `getMap`/`getSection` for decoding nested config maps into typed objects.
+
+---
+
 ## 💻 Full End-to-End Runnable Example
 
 Copy and paste this self-contained snippet into your `main.dart` to run it immediately:
@@ -595,6 +660,10 @@ try {
   print('Type mismatch: key \'${e.key}\' expected ${e.expectedType}, but found ${e.actualType}.');
 } on BridgeModuleMissingDependencyException catch (e) {
   print('Module registration failed: ${e.moduleName} requires prerequisite module ${e.missingDependency}.');
+} on BridgeModuleInUseException catch (e) {
+  print('Cannot unload ${e.moduleName}: still required by ${e.dependentModules}.');
+} on BridgeAsyncDependencyException catch (e) {
+  print('Async dependency ${e.type} must be resolved with getAsync<T>().');
 }
 ```
 
@@ -612,6 +681,16 @@ try {
 | `bridge.override<T>(mock)` | Replaces an existing dependency with a mock instance in one line |
 | `bridge.get<T>()` or `bridge<T>()` | Resolves the dependency of type `T` (or throws `BridgeDependencyException`) |
 | `bridge.tryGet<T>()` | Returns `null` only when `T` is not registered; dependency creation errors propagate |
+| `bridge.registerAsyncSingleton<T>(factory)` | Registers an async singleton resolved via `getAsync<T>()` |
+| `bridge.getAsync<T>()` / `tryGetAsync<T>()` | Async resolution; concurrent calls share one in-flight factory |
+| `bridge.createScope()` | Creates a `BridgeScope` for request/session-scoped dependencies |
+| `bridge.onLatest<E>()` | Event stream replaying the latest `E` to each new listener |
+| `bridge.once<E>({timeout})` | Completes with the next `E` event or throws `TimeoutException` |
+| `bridge.onModulesReady(cb)` | Callback fired whenever all modules finish registering |
+| `bridge.moduleDependents(type)` | Lists modules that declare `type` as a dependency |
+| `bridge.registeredDependencies` | Snapshot of all registered `DependencyKey`s |
+| `config.onChanged` / `config.remove(key)` | Reactive config stream / remove a runtime override |
+| `config.getMap(key)` / `getSection<T>(key, decoder)` | Read nested config maps as typed objects |
 | `bridge.publish<E>(event)` | Broadcasts a strongly-typed domain event to all active listeners |
 | `bridge.on<E>()` | Subscribes to an event stream of type `E` |
 | `module.subscribe<E>(bridge, onData)` | Scoped subscription **automatically cancelled** when the module is disposed |

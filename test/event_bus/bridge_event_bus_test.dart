@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
@@ -111,6 +113,63 @@ void main() {
       expect(eventBus.activeSubscriptionCount, 1);
 
       await eventBus.clearSubscriptions();
+      expect(eventBus.activeSubscriptionCount, 0);
+    });
+
+    test('onLatest replays the most recent matching event to new listeners',
+        () async {
+      eventBus
+          .publish(UserLoggedInEvent(userId: 'u1', email: 'first@test.com'));
+      eventBus.publish(UserLoggedOutEvent(userId: 'u1'));
+      eventBus
+          .publish(UserLoggedInEvent(userId: 'u2', email: 'second@test.com'));
+
+      final received = <String>[];
+      final sub = eventBus.onLatest<UserLoggedInEvent>().listen(
+            (e) => received.add(e.email),
+          );
+      addTearDown(sub.cancel);
+
+      await Future<void>.delayed(Duration.zero);
+
+      // Replays only the latest UserLoggedInEvent, not the logout in between.
+      expect(received, ['second@test.com']);
+
+      eventBus
+          .publish(UserLoggedInEvent(userId: 'u3', email: 'third@test.com'));
+      await Future<void>.delayed(Duration.zero);
+      expect(received, ['second@test.com', 'third@test.com']);
+    });
+
+    test('onLatest emits nothing when no matching event was published',
+        () async {
+      final received = <UserLoggedInEvent>[];
+      final sub = eventBus.onLatest<UserLoggedInEvent>().listen(received.add);
+      addTearDown(sub.cancel);
+
+      eventBus.publish(UserLoggedOutEvent(userId: 'u1'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(received, isEmpty);
+    });
+
+    test('once completes with the next matching event', () async {
+      final future = eventBus.once<UserLoggedInEvent>();
+      eventBus.publish(UserLoggedOutEvent(userId: 'u1'));
+      eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'once@test.com'));
+
+      final event = await future;
+      expect(event.email, 'once@test.com');
+      expect(eventBus.activeSubscriptionCount, 0); // cleaned up
+    });
+
+    test('once times out with TimeoutException', () async {
+      await expectLater(
+        eventBus.once<UserLoggedInEvent>(
+          timeout: const Duration(milliseconds: 10),
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
       expect(eventBus.activeSubscriptionCount, 0);
     });
 

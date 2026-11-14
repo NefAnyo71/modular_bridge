@@ -193,6 +193,64 @@ void main() {
       expect(authModule.userLogoutEventReceivedCount, 0);
     });
 
+    test(
+        'onModulesReady fires once after modules register and re-arms on empty',
+        () async {
+      final calls = <String>[];
+      bridge.onModulesReady((b) async {
+        calls.add('ready:${b.activeModuleNames.join(',')}');
+      });
+
+      await bridge.registerModules([CoreTestModule(), AuthTestModule()]);
+
+      expect(calls, ['ready:CoreTestModule,AuthTestModule']);
+
+      // Registering more modules does not re-fire.
+      await bridge.registerModule(SimpleTestModule());
+      expect(calls.length, 1);
+
+      // Unregistering everything re-arms the hook.
+      await bridge.unregisterModuleByName('SimpleTestModule');
+      await bridge.unregisterModule<AuthTestModule>();
+      await bridge.unregisterModuleByName('CoreTestModule');
+
+      await bridge.registerModule(CoreTestModule());
+      expect(calls.length, 2);
+    });
+
+    test(
+        'onModulesReady callback registered after modules are ready fires immediately',
+        () async {
+      await bridge.registerModule(CoreTestModule());
+
+      var fired = false;
+      bridge.onModulesReady((_) => fired = true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fired, isTrue);
+    });
+
+    test('modules registered inside init() do not fire onModulesReady early',
+        () async {
+      final readySnapshots = <String>[];
+      bridge.onModulesReady(
+        (b) => readySnapshots.add(b.activeModuleNames.join(',')),
+      );
+
+      await bridge.registerModule(NestedInitModule());
+
+      // Ready fires exactly once, after BOTH modules finished initializing.
+      expect(readySnapshots, ['NestedInitModule,SimpleTestModule']);
+      expect(bridge.isModuleRegistered<SimpleTestModule>(), isTrue);
+    });
+
+    test('onModulesReady callback errors do not break registration', () async {
+      bridge.onModulesReady((_) => throw StateError('callback failed'));
+
+      await bridge.registerModule(CoreTestModule());
+      expect(bridge.isModuleRegistered<CoreTestModule>(), isTrue);
+    });
+
     test('rolls back module registrations when initialization fails', () async {
       final module = FailingTestModule();
 

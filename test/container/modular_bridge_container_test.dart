@@ -82,7 +82,8 @@ void main() {
       expect(bridge.tryGet<AuthService>(), isNull);
     });
 
-    test('tryGet returns the resolved instance when dependency is registered', () {
+    test('tryGet returns the resolved instance when dependency is registered',
+        () {
       bridge.registerSingleton<String>('named-value', instanceName: 'token');
 
       expect(bridge.tryGet<String>(instanceName: 'token'), 'named-value');
@@ -100,7 +101,9 @@ void main() {
       );
     });
 
-    test('throws BridgeDependencyAlreadyRegisteredException when override is false', () {
+    test(
+        'throws BridgeDependencyAlreadyRegisteredException when override is false',
+        () {
       bridge.registerSingleton<AuthService>(RealAuthService());
 
       expect(
@@ -109,7 +112,9 @@ void main() {
       );
     });
 
-    test('override: true replaces an existing registration and disposes the old one', () {
+    test(
+        'override: true replaces an existing registration and disposes the old one',
+        () {
       var disposed = false;
       bridge.registerSingleton<String>(
         'original',
@@ -135,9 +140,13 @@ void main() {
       expect(bridge.get<AuthService>().login('test'), 'mock_token_for_test');
     });
 
-    test('detects circular dependency and throws BridgeCircularDependencyException', () {
-      bridge.registerFactory<CircularA>(() => CircularA(bridge.get<CircularB>()));
-      bridge.registerFactory<CircularB>(() => CircularB(bridge.get<CircularA>()));
+    test(
+        'detects circular dependency and throws BridgeCircularDependencyException',
+        () {
+      bridge
+          .registerFactory<CircularA>(() => CircularA(bridge.get<CircularB>()));
+      bridge
+          .registerFactory<CircularB>(() => CircularB(bridge.get<CircularA>()));
 
       expect(
         () => bridge.get<CircularA>(),
@@ -150,12 +159,15 @@ void main() {
     });
 
     test('supports named instances of the same type', () {
-      bridge.registerSingleton<String>('https://dev.api.com', instanceName: 'baseUrl');
-      bridge.registerSingleton<String>('secret-key-123', instanceName: 'apiKey');
+      bridge.registerSingleton<String>('https://dev.api.com',
+          instanceName: 'baseUrl');
+      bridge.registerSingleton<String>('secret-key-123',
+          instanceName: 'apiKey');
 
       expect(bridge.isRegistered<String>(instanceName: 'baseUrl'), isTrue);
       expect(bridge.isRegistered<String>(instanceName: 'apiKey'), isTrue);
-      expect(bridge.get<String>(instanceName: 'baseUrl'), 'https://dev.api.com');
+      expect(
+          bridge.get<String>(instanceName: 'baseUrl'), 'https://dev.api.com');
       expect(bridge.get<String>(instanceName: 'apiKey'), 'secret-key-123');
     });
 
@@ -174,7 +186,8 @@ void main() {
       expect(disposedValue, 'user_42');
     });
 
-    test('reset clears all registrations and triggers onDispose hooks', () async {
+    test('reset clears all registrations and triggers onDispose hooks',
+        () async {
       var disposeCount = 0;
       bridge.registerSingleton<UserRepository>(
         UserRepository(),
@@ -189,4 +202,220 @@ void main() {
       expect(bridge.isRegistered<AuthService>(), isFalse);
     });
   });
+
+  group('Async Dependency Injection', () {
+    late ModularBridge bridge;
+
+    setUp(() {
+      bridge = ModularBridge.createIsolated();
+    });
+
+    tearDown(() async {
+      await bridge.reset();
+    });
+
+    test('registers and resolves async singleton via getAsync with caching',
+        () async {
+      var factoryCalls = 0;
+      bridge.registerAsyncSingleton<AsyncConfig>(() async {
+        factoryCalls++;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        return AsyncConfig('cfg_$factoryCalls');
+      });
+
+      final first = await bridge.getAsync<AsyncConfig>();
+      final second = await bridge.getAsync<AsyncConfig>();
+
+      expect(factoryCalls, 1);
+      expect(first.value, 'cfg_1');
+      expect(identical(first, second), isTrue);
+    });
+
+    test('get on an async singleton throws BridgeAsyncDependencyException', () {
+      bridge.registerAsyncSingleton<AsyncConfig>(() async => AsyncConfig('x'));
+
+      expect(
+        () => bridge.get<AsyncConfig>(),
+        throwsA(isA<BridgeAsyncDependencyException>()),
+      );
+    });
+
+    test('concurrent getAsync calls share a single factory invocation',
+        () async {
+      var factoryCalls = 0;
+      bridge.registerAsyncSingleton<AsyncConfig>(() async {
+        factoryCalls++;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        return AsyncConfig('shared');
+      });
+
+      final results = await Future.wait([
+        bridge.getAsync<AsyncConfig>(),
+        bridge.getAsync<AsyncConfig>(),
+        bridge.getAsync<AsyncConfig>(),
+      ]);
+
+      expect(factoryCalls, 1);
+      expect(
+        results.every((r) => identical(r, results.first)),
+        isTrue,
+      );
+    });
+
+    test('failed async resolution is retried on the next call', () async {
+      var factoryCalls = 0;
+      bridge.registerAsyncSingleton<AsyncConfig>(() async {
+        factoryCalls++;
+        if (factoryCalls == 1) {
+          throw StateError('transient failure');
+        }
+        return AsyncConfig('recovered');
+      });
+
+      await expectLater(
+        bridge.getAsync<AsyncConfig>(),
+        throwsA(isA<StateError>()),
+      );
+
+      final recovered = await bridge.getAsync<AsyncConfig>();
+      expect(recovered.value, 'recovered');
+      expect(factoryCalls, 2);
+    });
+
+    test('tryGetAsync returns null for missing and resolves registered deps',
+        () async {
+      expect(await bridge.tryGetAsync<AsyncConfig>(), isNull);
+
+      bridge.registerAsyncSingleton<AsyncConfig>(() async => AsyncConfig('a'));
+      expect((await bridge.tryGetAsync<AsyncConfig>())?.value, 'a');
+    });
+
+    test('getAsync resolves synchronous dependencies transparently', () async {
+      bridge.registerSingleton<String>('sync-value');
+      bridge.registerLazySingleton<UserRepository>(UserRepository.new);
+
+      expect(await bridge.getAsync<String>(), 'sync-value');
+      expect((await bridge.getAsync<UserRepository>()).getUser(), 'user_42');
+    });
+
+    test('detects circular async dependencies', () async {
+      bridge.registerAsyncSingleton<AsyncCircularA>(
+        () async => AsyncCircularA(await bridge.getAsync<AsyncCircularB>()),
+      );
+      bridge.registerAsyncSingleton<AsyncCircularB>(
+        () async => AsyncCircularB(await bridge.getAsync<AsyncCircularA>()),
+      );
+
+      await expectLater(
+        bridge.getAsync<AsyncCircularA>(),
+        throwsA(isA<BridgeCircularDependencyException>()),
+      );
+    });
+
+    test('async singleton can depend on sync and other async dependencies',
+        () async {
+      bridge.registerSingleton<String>('token-123');
+      bridge.registerAsyncSingleton<ApiConfigHolder>(
+        () async => ApiConfigHolder(
+          token: bridge.get<String>(),
+          remote: await bridge.getAsync<AsyncConfig>(),
+        ),
+      );
+      bridge.registerAsyncSingleton<AsyncConfig>(
+          () async => AsyncConfig('remote'));
+
+      final holder = await bridge.getAsync<ApiConfigHolder>();
+      expect(holder.token, 'token-123');
+      expect(holder.remote.value, 'remote');
+    });
+
+    test('unregistering an async singleton disposes the resolved instance',
+        () async {
+      var disposed = false;
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () async => AsyncConfig('x'),
+        onDispose: (_) => disposed = true,
+      );
+
+      await bridge.getAsync<AsyncConfig>();
+      bridge.unregister<AsyncConfig>();
+
+      expect(bridge.isRegistered<AsyncConfig>(), isFalse);
+      expect(disposed, isTrue);
+    });
+
+    test('async singleton supports named instances', () async {
+      bridge.registerAsyncSingleton<String>(
+        () async => 'primary',
+        instanceName: 'db.primary',
+      );
+      bridge.registerAsyncSingleton<String>(
+        () async => 'replica',
+        instanceName: 'db.replica',
+      );
+
+      expect(
+          await bridge.getAsync<String>(instanceName: 'db.primary'), 'primary');
+      expect(
+          await bridge.getAsync<String>(instanceName: 'db.replica'), 'replica');
+    });
+  });
+
+  group('Debug Leak Inspection', () {
+    late ModularBridge bridge;
+
+    setUp(() {
+      bridge = ModularBridge.createIsolated();
+    });
+
+    tearDown(() async {
+      await bridge.reset();
+    });
+
+    test('debugLeakReport is empty on a fresh container', () {
+      expect(bridge.debugLeakReport(), isEmpty);
+      expect(() => bridge.assertNoLeaks(), returnsNormally);
+    });
+
+    test('debugLeakReport detects leftover resolution state after reset',
+        () async {
+      bridge.registerSingleton<UserRepository>(UserRepository());
+      await bridge.reset();
+
+      // reset() clears everything, so the report stays clean.
+      expect(bridge.debugLeakReport(), isEmpty);
+    });
+  });
+
+  group('Config Swapping', () {
+    late ModularBridge bridge;
+
+    setUp(() {
+      bridge = ModularBridge.createIsolated();
+    });
+
+    tearDown(() async {
+      await bridge.reset();
+    });
+
+    test('setConfig emits onConfigChanged with the new instance', () async {
+      final events = <BridgeConfig>[];
+      final sub = bridge.onConfigChanged.listen(events.add);
+      addTearDown(sub.cancel);
+
+      final newConfig = BridgeConfig(environment: BridgeEnvironment.prod);
+      bridge.setConfig(newConfig);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, [same(newConfig)]);
+      expect(bridge.config, same(newConfig));
+      expect(bridge.config.environment, BridgeEnvironment.prod);
+    });
+  });
+}
+
+class ApiConfigHolder {
+  ApiConfigHolder({required this.token, required this.remote});
+  final String token;
+  final AsyncConfig remote;
 }

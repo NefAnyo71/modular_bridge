@@ -238,6 +238,68 @@ void main() {
       expect(config.getString('hotfix'), 'enabled');
     });
 
+    test(
+        'switchEnvironment with same env and overrides does not emit env event',
+        () async {
+      final envEvents = <BridgeEnvironment>[];
+      final changeEvents = <void>[];
+      final envSub = config.onEnvironmentChanged.listen(envEvents.add);
+      final changeSub = config.onChanged.listen((_) => changeEvents.add(null));
+      addTearDown(envSub.cancel);
+      addTearDown(changeSub.cancel);
+
+      config.switchEnvironment(
+        BridgeEnvironment.dev, // same environment
+        runtimeOverrides: {'runtime.key': 'value'},
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(envEvents, isEmpty);
+      expect(changeEvents, hasLength(1));
+      expect(config.getString('runtime.key'), 'value');
+    });
+
+    test('getMap returns unmodifiable nested maps and getSection decodes them',
+        () {
+      final configWithSection = BridgeConfig(
+        environment: BridgeEnvironment.dev,
+        commonValues: {
+          'api': {
+            'baseUrl': 'https://api.example.com',
+            'timeoutMs': 5000,
+            'retries': 3,
+          },
+        },
+      );
+      addTearDown(configWithSection.dispose);
+
+      final map = configWithSection.getMap('api');
+      expect(map['baseUrl'], 'https://api.example.com');
+      expect(() => map['baseUrl'] = 'x', throwsUnsupportedError);
+
+      final section = configWithSection.getSection<ApiSection>(
+        'api',
+        (m) => ApiSection(
+          baseUrl: m['baseUrl'] as String,
+          timeoutMs: m['timeoutMs'] as int,
+          retries: m['retries'] as int,
+        ),
+      );
+
+      expect(section.baseUrl, 'https://api.example.com');
+      expect(section.timeoutMs, 5000);
+      expect(section.retries, 3);
+    });
+
+    test('getMap throws for missing keys and non-map values', () {
+      expect(() => config.getMap('missing'),
+          throwsA(isA<BridgeConfigKeyNotFoundException>()));
+      expect(
+        () => config.getMap('appName'), // String value
+        throwsA(isA<BridgeConfigTypeMismatchException>()),
+      );
+    });
+
     test('parses BridgeEnvironment from string correctly', () {
       expect(BridgeEnvironment.fromString('dev'), BridgeEnvironment.dev);
       expect(
@@ -251,4 +313,12 @@ void main() {
       );
     });
   });
+}
+
+class ApiSection {
+  ApiSection(
+      {required this.baseUrl, required this.timeoutMs, required this.retries});
+  final String baseUrl;
+  final int timeoutMs;
+  final int retries;
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 import 'core_module.dart';
@@ -11,11 +13,24 @@ class EnvironmentNotifier extends Notifier<BridgeEnvironment> {
   BridgeEnvironment build() {
     final bridge = ref.watch(bridgeProvider);
 
-    final sub = bridge.config.onEnvironmentChanged.listen((env) {
-      state = env;
+    // Re-subscribe when the bridge swaps its BridgeConfig via setConfig —
+    // the old config's streams go stale.
+    StreamSubscription<BridgeEnvironment>? envSub;
+    void listenTo(BridgeConfig config) {
+      envSub?.cancel();
+      envSub = config.onEnvironmentChanged.listen((env) => state = env);
+    }
+
+    listenTo(bridge.config);
+    final configSub = bridge.onConfigChanged.listen((config) {
+      listenTo(config);
+      state = config.environment;
     });
 
-    ref.onDispose(sub.cancel);
+    ref.onDispose(() {
+      envSub?.cancel();
+      configSub.cancel();
+    });
     return bridge.config.environment;
   }
 

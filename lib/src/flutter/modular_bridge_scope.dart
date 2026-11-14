@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/widgets.dart';
+import '../config/bridge_config.dart';
 import '../config/bridge_environment.dart';
 import '../core/container/modular_bridge_container.dart';
 
@@ -64,6 +65,7 @@ class ModularBridgeProvider extends StatefulWidget {
 class _ModularBridgeProviderState extends State<ModularBridgeProvider> {
   late ModularBridge _bridge;
   StreamSubscription<BridgeEnvironment>? _envSubscription;
+  StreamSubscription<BridgeConfig>? _configSubscription;
 
   @override
   void initState() {
@@ -77,23 +79,43 @@ class _ModularBridgeProviderState extends State<ModularBridgeProvider> {
     super.didUpdateWidget(oldWidget);
     final newBridge = widget.bridge ?? ModularBridge.instance;
     if (_bridge != newBridge) {
-      unawaited(_envSubscription?.cancel());
+      _detachSubscriptions();
       _bridge = newBridge;
       _subscribe();
     }
   }
 
   void _subscribe() {
-    _envSubscription = _bridge.config.onEnvironmentChanged.listen((_) {
+    // Migrate to a swapped BridgeConfig: the old config's streams go stale.
+    _configSubscription = _bridge.onConfigChanged.listen((_) {
+      unawaited(_envSubscription?.cancel());
+      _envSubscription = null;
+      _subscribeToEnvironment(_bridge.config);
+      if (mounted) {
+        setState(() {});
+      }
+    });
+    _subscribeToEnvironment(_bridge.config);
+  }
+
+  void _subscribeToEnvironment(BridgeConfig config) {
+    _envSubscription = config.onEnvironmentChanged.listen((_) {
       if (mounted) {
         setState(() {});
       }
     });
   }
 
+  void _detachSubscriptions() {
+    unawaited(_envSubscription?.cancel());
+    unawaited(_configSubscription?.cancel());
+    _envSubscription = null;
+    _configSubscription = null;
+  }
+
   @override
   void dispose() {
-    _envSubscription?.cancel();
+    _detachSubscriptions();
     super.dispose();
   }
 

@@ -63,6 +63,21 @@ final class BridgeDependencyAlreadyRegisteredException
         );
 }
 
+/// Thrown when a synchronous [ModularBridge.get] is used on a dependency that
+/// was registered with an async factory.
+///
+/// Resolve the dependency with `getAsync<T>()` instead.
+final class BridgeAsyncDependencyException extends BridgeDependencyException {
+  /// Creates a [BridgeAsyncDependencyException] for the given [type].
+  // ignore: prefer_const_constructors_in_immutables — interpolated message is not const-evaluable.
+  BridgeAsyncDependencyException(Type type)
+      : super(
+          'Dependency \'$type\' is registered asynchronously and must be '
+          'resolved with `getAsync<T>()` instead of `get<T>()`.',
+          type: type,
+        );
+}
+
 /// Thrown when a circular dependency loop is detected during dependency resolution.
 final class BridgeCircularDependencyException
     extends BridgeDependencyException {

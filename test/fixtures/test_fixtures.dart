@@ -36,6 +36,21 @@ class CircularB {
   final CircularA a;
 }
 
+class AsyncConfig {
+  AsyncConfig(this.value);
+  final String value;
+}
+
+class AsyncCircularA {
+  AsyncCircularA(this.b);
+  final AsyncCircularB b;
+}
+
+class AsyncCircularB {
+  AsyncCircularB(this.a);
+  final AsyncCircularA a;
+}
+
 // Events
 final class UserLoggedInEvent extends BridgeEvent {
   UserLoggedInEvent({required this.userId, required this.email});
@@ -72,7 +87,6 @@ class AuthTestModule extends FeatureModule {
   List<Type> get dependencies => [CoreTestModule];
 
   bool isInitialized = false;
-  bool isDisposed = false;
   int userLogoutEventReceivedCount = 0;
 
   @override
@@ -90,8 +104,28 @@ class AuthTestModule extends FeatureModule {
 
   @override
   void dispose(ModularBridge bridge) async {
-    isDisposed = true;
     await super.dispose(bridge);
+  }
+}
+
+class SimpleTestModule extends FeatureModule {
+  @override
+  String get name => 'SimpleTestModule';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+}
+
+class NestedInitModule extends FeatureModule {
+  @override
+  String get name => 'NestedInitModule';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+
+  @override
+  Future<void> init(ModularBridge bridge) async {
+    await bridge.registerModule(SimpleTestModule());
   }
 }
 
@@ -99,7 +133,6 @@ class FailingTestModule extends FeatureModule {
   @override
   String get name => 'FailingTestModule';
 
-  bool isDisposed = false;
   bool dependencyDisposed = false;
   int eventCount = 0;
 
@@ -119,7 +152,6 @@ class FailingTestModule extends FeatureModule {
 
   @override
   Future<void> dispose(ModularBridge bridge) async {
-    isDisposed = true;
     await super.dispose(bridge);
   }
 }

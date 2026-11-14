@@ -30,6 +30,15 @@ abstract class FeatureModule {
   /// Default constructor for subclasses.
   FeatureModule();
 
+  bool _isDisposed = false;
+
+  /// Whether [dispose] has been called on this module instance.
+  ///
+  /// Module instances are single-use: once disposed (via unregister,
+  /// [ModularBridge.reset], or a failed registration rollback) they cannot be
+  /// registered again — instantiate a new module to re-register.
+  bool get isDisposed => _isDisposed;
+
   /// Unique name for this module. Defaults to the concrete class name.
   String get name => runtimeType.toString();
 
@@ -46,6 +55,12 @@ abstract class FeatureModule {
     ModularBridge bridge,
     void Function(T event) onData,
   ) {
+    if (_isDisposed) {
+      throw StateError(
+        'Cannot subscribe on disposed FeatureModule ($name). '
+        'Create a new module instance to re-register.',
+      );
+    }
     final sub = bridge.eventBus.subscribe<T>(
       onData,
       ownerId: name,
@@ -65,6 +80,7 @@ abstract class FeatureModule {
   /// Automatically cancels all subscriptions created via [subscribe].
   @mustCallSuper
   FutureOr<void> dispose(ModularBridge bridge) async {
+    _isDisposed = true;
     for (final sub in _internalSubscriptions) {
       await sub.cancel();
     }

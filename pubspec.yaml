@@ -1,6 +1,6 @@
 name: modular_bridge
 description: "High-performance, zero-dependency modular dependency injection, type-safe configuration, and decoupled event-bus architecture framework for Flutter."
-version: 0.3.0
+version: 0.4.1
 homepage: https://github.com/NefAnyo71/modular_bridge
 repository: https://github.com/NefAnyo71/modular_bridge
 issue_tracker: https://github.com/NefAnyo71/modular_bridge/issues
@@ -24,5 +24,3 @@ topics:
   - modular
   - environment
   - zero-dependency
-
-flutter:
