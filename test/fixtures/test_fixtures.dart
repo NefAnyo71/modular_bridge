@@ -51,6 +51,16 @@ class AsyncCircularB {
   final AsyncCircularA a;
 }
 
+class MixedAsyncA {
+  MixedAsyncA(this.b);
+  final MixedSyncB b;
+}
+
+class MixedSyncB {
+  MixedSyncB(this.pendingAsyncA);
+  final Future<Object?> pendingAsyncA;
+}
+
 // Events
 final class UserLoggedInEvent extends BridgeEvent {
   UserLoggedInEvent({required this.userId, required this.email});

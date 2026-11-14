@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 /// Base sealed exception class for all errors thrown by `modular_bridge`.
@@ -142,6 +144,32 @@ final class BridgeConfigTypeMismatchException extends BridgeConfigException {
         );
 }
 
+/// Thrown when [ModularBridge.allReady] or [ModularBridge.isReady] exceeds its
+/// timeout while dependencies are still pending.
+///
+/// Carries structured details about which registrations were still pending
+/// and which had already become ready, mirroring `get_it`'s
+/// `WaitingTimeOutException`.
+final class BridgeWaitingTimeOutException extends TimeoutException {
+  /// Creates a [BridgeWaitingTimeOutException].
+  BridgeWaitingTimeOutException({
+    required Duration duration,
+    required this.pending,
+    required this.ready,
+  }) : super(
+          'Timed out after ${duration.inMilliseconds}ms waiting for '
+          'dependencies to be ready. Pending: '
+          '${pending.isEmpty ? 'none' : pending.join(', ')}.',
+          duration,
+        );
+
+  /// Registration keys that had not become ready when the timeout hit.
+  final List<String> pending;
+
+  /// Registration keys that were already ready when the timeout hit.
+  final List<String> ready;
+}
+
 /// Sealed base class for module lifecycle and registration exceptions.
 sealed class BridgeModuleException extends BridgeException {
   /// Creates a [BridgeModuleException].
@@ -189,6 +217,17 @@ final class BridgeModuleInUseException extends BridgeModuleException {
 
   /// Names of the registered modules that depend on the module being unregistered.
   final List<String> dependentModules;
+}
+
+/// Thrown when a scope operation targets a [BridgeScope] name that does not
+/// exist on the active scope stack or among live scopes.
+final class BridgeScopeNotFoundException extends BridgeException {
+  /// Creates a [BridgeScopeNotFoundException].
+  const BridgeScopeNotFoundException(String scopeName)
+      : super(
+          'No BridgeScope named \'$scopeName\' exists. Push or create a named '
+          'scope before calling dropScope/popScopesTill.',
+        );
 }
 
 /// Thrown when module dependencies are not satisfied.

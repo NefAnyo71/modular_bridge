@@ -169,10 +169,12 @@ class BridgeConfig {
   }) {
     _ensureNotDisposed();
     final envChanged = _environment != newEnvironment;
-    if (!envChanged && runtimeOverrides == null) return;
+    final hasOverrides =
+        runtimeOverrides != null && runtimeOverrides.isNotEmpty;
+    if (!envChanged && !hasOverrides) return;
 
     _environment = newEnvironment;
-    if (runtimeOverrides != null) {
+    if (hasOverrides) {
       _runtimeOverrides.addAll(runtimeOverrides);
     }
     _rebuildActiveConfig();
@@ -188,21 +190,36 @@ class BridgeConfig {
   /// Sets or updates a single configuration value.
   ///
   /// The value persists across environment switches as a runtime override.
+  /// [onChanged] is only emitted when the effective value actually changes.
   void set(String key, dynamic value) {
     _ensureNotDisposed();
+    final changed =
+        !_activeConfig.containsKey(key) || _activeConfig[key] != value;
     _runtimeOverrides[key] = value;
     _activeConfig[key] = value;
-    _changeController.add(null);
+    if (changed) {
+      _changeController.add(null);
+    }
   }
 
   /// Sets multiple configuration values.
   ///
   /// The values persist across environment switches as runtime overrides.
+  /// [onChanged] is emitted once if at least one effective value changed.
   void setAll(Map<String, dynamic> values) {
     _ensureNotDisposed();
+    var changed = false;
+    for (final entry in values.entries) {
+      if (!_activeConfig.containsKey(entry.key) ||
+          _activeConfig[entry.key] != entry.value) {
+        changed = true;
+      }
+    }
     _runtimeOverrides.addAll(values);
     _activeConfig.addAll(values);
-    _changeController.add(null);
+    if (changed) {
+      _changeController.add(null);
+    }
   }
 
   /// Removes a runtime override for [key].
@@ -288,6 +305,10 @@ class BridgeConfig {
   }
 
   /// Retrieves an unmodifiable [Map] configuration value for [key].
+  ///
+  /// The returned map is a shallow copy: mutating it never affects the stored
+  /// configuration, but nested maps or lists inside it remain shared
+  /// references. Treat nested values as read-only.
   ///
   /// Throws [BridgeConfigKeyNotFoundException] if [key] is absent and no
   /// [defaultValue] is given, and [BridgeConfigTypeMismatchException] if the

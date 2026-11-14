@@ -269,7 +269,113 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(module.eventCount, 0);
     });
+
+    test('supports async registerDependencies before init', () async {
+      final events = <String>[];
+      final module = _AsyncRegistrationModule(events);
+
+      await bridge.registerModule(module);
+
+      expect(events, ['dependencies', 'init']);
+      expect(bridge.isRegistered<AsyncConfig>(), isTrue);
+      expect((await bridge.getAsync<AsyncConfig>()).value, 'from-module');
+    });
+
+    test('rolls back async module registrations when init fails', () async {
+      final module = _FailingAsyncModule();
+
+      await expectLater(
+        bridge.registerModule(module),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(bridge.isModuleRegistered<_FailingAsyncModule>(), isFalse);
+      expect(bridge.isRegistered<AsyncConfig>(), isFalse);
+      expect(module.isDisposed, isTrue);
+    });
+
+    test('parallel module registrations keep correct dependency owners',
+        () async {
+      final slow =
+          _SlowModule('SlowModule', delay: const Duration(milliseconds: 20));
+      final fast = _SlowModule('FastModule', delay: Duration.zero);
+
+      await Future.wait([
+        bridge.registerModule(slow),
+        bridge.registerModule(fast),
+      ]);
+
+      // Each module's dependency must be attributed to its own owner so that
+      // unregistering one never removes the other's registrations.
+      await bridge.unregisterModuleByName('SlowModule');
+      expect(bridge.isRegistered<AsyncConfig>(instanceName: 'SlowModule'),
+          isFalse);
+      expect(
+          bridge.isRegistered<AsyncConfig>(instanceName: 'FastModule'), isTrue);
+
+      await bridge.unregisterModuleByName('FastModule');
+      expect(bridge.isRegistered<AsyncConfig>(instanceName: 'FastModule'),
+          isFalse);
+    });
   });
+}
+
+class _AsyncRegistrationModule extends FeatureModule {
+  _AsyncRegistrationModule(this.events);
+
+  final List<String> events;
+
+  @override
+  String get name => 'AsyncRegistrationModule';
+
+  @override
+  Future<void> registerDependencies(ModularBridge bridge) async {
+    await Future<void>.delayed(Duration.zero);
+    events.add('dependencies');
+    bridge.registerAsyncSingleton<AsyncConfig>(
+      () async => AsyncConfig('from-module'),
+    );
+  }
+
+  @override
+  void init(ModularBridge bridge) {
+    events.add('init');
+  }
+}
+
+class _FailingAsyncModule extends FeatureModule {
+  @override
+  String get name => '_FailingAsyncModule';
+
+  @override
+  Future<void> registerDependencies(ModularBridge bridge) async {
+    await Future<void>.delayed(Duration.zero);
+    bridge.registerAsyncSingleton<AsyncConfig>(() async => AsyncConfig('x'));
+  }
+
+  @override
+  void init(ModularBridge bridge) {
+    throw StateError('async init failed');
+  }
+}
+
+class _SlowModule extends FeatureModule {
+  _SlowModule(this.moduleName, {required this.delay});
+
+  final String moduleName;
+  final Duration delay;
+
+  @override
+  String get name => moduleName;
+
+  @override
+  Future<void> registerDependencies(ModularBridge bridge) async {
+    await Future<void>.delayed(delay);
+    bridge.registerAsyncSingleton<AsyncConfig>(
+      () async => AsyncConfig(moduleName),
+      instanceName: moduleName,
+    );
+  }
 }
 
 class _OrderTrackingModule extends FeatureModule {

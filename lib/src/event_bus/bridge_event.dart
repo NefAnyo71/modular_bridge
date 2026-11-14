@@ -27,4 +27,3 @@ abstract class BridgeEvent {
   @override
   String toString() => '$runtimeType(timestamp: $timestamp)';
 }
-

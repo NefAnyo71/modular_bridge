@@ -1,3 +1,28 @@
+## 0.6.0
+
+* **Parameterized factories**: `registerFactoryParam`, `registerCachedFactoryParam`, `registerFactoryParamAsync`, `registerCachedFactoryParamAsync` + `getParam`/`getParamAsync` — `get_it` parity for parameterized resolutions, with per-`(param1, param2)` caching for the cached variants. Works inside scopes.
+* **`getAll`/`getAllAsync`**: resolve every registration of a type (including named instances) visible from the current scope chain, nearest scope first.
+* **`dependencyGraph()`**: returns a `BridgeDependencyGraph` with all `dependsOn` edges across root + live scopes and iterative cycle detection (`hasCycles`, `cycles`).
+* **`BridgeWaitingTimeOutException`**: `allReady`/`isReady` timeouts now carry structured `pending`/`ready` registration lists (replaces plain `TimeoutException`; still a `TimeoutException` subclass).
+* **Module init ordering**: `registerModules` topologically sorts the batch so `FeatureModule.dependencies` are initialized first; dependency cycles throw `StateError`.
+* **Test helpers**: `assertRegistered<T>()`, `assertAllReadySync()`, and `pendingReadinessKeys` (`@visibleForTesting`).
+
+## 0.5.0
+
+* **`get_it` parity — scope stack**: `pushNewScope`, `pushNewScopeAsync`, `popScope`, `dropScope(name)`, `popScopesTill(name)`, `currentScope`, `activeScopeNames`, `onScopeChanged`, and `resetScope()`. While a scope is pushed, `bridge.register*`/`get*` route through the scope chain automatically; explicit `BridgeScope` hierarchies remain supported.
+* **`get_it` parity — startup orchestration**: `signalsReady` registration flag, `WillSignalReady` marker interface, `signalReady(instance)`, `registerSingletonWithDependencies` with `dependsOn` keys (circular orchestration is detected), `onCreated` callbacks, and `registerSingletonAsync`/`registerLazySingletonAsync` aliases.
+* **`get_it` parity — resets**: `resetLazySingleton`, `resetLazySingletons`, `resetScope(disposeInstances:)` on both bridge and scopes.
+* **`get_it` parity — misc**: `Disposable` interface (auto `onDispose` when no explicit hook), `allowReassignment` flag, `currentScopeName`, `scope.name` alias, and `unregister` now falls back to the root registry when the active scope does not own the key.
+* **Config-aware DI**: `registerConfigBinding` re-decodes a `BridgeConfig` key into a DI registration and auto-resets it on every effective config change.
+* **Diagnostics**: `diagnosticsReport()` returns a structured `BridgeDiagnosticsReport` (registrations with lifecycle/owner/scope/readiness metadata, module names, live scopes, scope stack, pending async resolutions, leak issues); `DependencyInfo` snapshots are exposed per scope and on the bridge.
+* **Async module registration**: `FeatureModule.registerDependencies` is now `FutureOr<void>` — modules can `await` asynchronous setup before `init` runs. Dependency ownership is tracked through an async-local zone context, so registrations made after `await` points (and during parallel `registerModule` calls) are always attributed to the correct module — including when a scope is active.
+* **Hierarchical `BridgeScope`**: scopes now support `createChildScope()` (child → parent → bridge resolution), full async lifecycles (`registerAsyncSingleton`, `registerFactoryAsync`, `getAsync`, `tryGetAsync`, `isReady`), async `onDispose` hooks, named scopes with scope-level dispose callbacks, and `createScopeAsync(init)` for sealed async scope setup that disposes itself on failure.
+* **Unified circular dependency detection**: sync and async resolutions share a single zone-based resolution chain (`resolution_context.dart`), so mixed sync/async cycles — including fire-and-forget `getAsync` calls inside sync factories and `dependsOn` orchestration loops — are detected instead of deadlocking or leaking `Future`s.
+* **Async-safe lifecycle**: `unregister`, module unregister, scope `dispose`, and `reset` now await in-flight async resolutions and async `onDispose` hooks; dependencies dispose in strict LIFO registration order; resolving a disposed dependency throws `StateError`.
+* **Event bus hardening**: `onLatest` replay is sequence-guarded against duplicate/missed events, `once` completes with `StateError` when the bus is disposed mid-wait, `BridgeSubscription.cancel` is idempotent and retryable on failure, `hasListeners(includeCatchAll:)` opts into `BridgeEvent` catch-all subscriptions, and `clearReplayHistory()` releases retained event references.
+* **Config**: `set`/`setAll` no longer emit `onChanged` when effective values are unchanged; empty `runtimeOverrides` maps are treated as no-ops; `getMap` documents its shallow-copy semantics.
+* Breaking-ish notes: `ModularBridge.unregister` now returns `Future<void>` (await it to guarantee disposal completed — unawaited calls still work); `FeatureModule.registerDependencies` may return `FutureOr<void>` (existing `void` overrides remain valid); `DependencyLifecycle.asyncFactory` was added; `bridge.get`/`register*` now route through the active scope stack when `pushNewScope` is used.
+
 ## 0.4.1
 
 * **Fixed**: `setConfig` no longer leaves `ModularBridgeProvider`/`EnvironmentNotifier` subscribed to the stale config — added `ModularBridge.onConfigChanged` and migration logic in the provider.

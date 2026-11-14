@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:modular_bridge/modular_bridge.dart';
 
@@ -358,6 +360,223 @@ void main() {
           await bridge.getAsync<String>(instanceName: 'db.primary'), 'primary');
       expect(
           await bridge.getAsync<String>(instanceName: 'db.replica'), 'replica');
+    });
+
+    test('registerFactoryAsync produces a new instance per getAsync', () async {
+      var calls = 0;
+      bridge.registerFactoryAsync<AsyncConfig>(() async {
+        calls++;
+        return AsyncConfig('call_$calls');
+      });
+
+      final first = await bridge.getAsync<AsyncConfig>();
+      final second = await bridge.getAsync<AsyncConfig>();
+
+      expect(calls, 2);
+      expect(first.value, 'call_1');
+      expect(second.value, 'call_2');
+      expect(identical(first, second), isFalse);
+    });
+
+    test('get on an async factory throws BridgeAsyncDependencyException', () {
+      bridge.registerFactoryAsync<AsyncConfig>(() async => AsyncConfig('x'));
+
+      expect(
+        () => bridge.get<AsyncConfig>(),
+        throwsA(isA<BridgeAsyncDependencyException>()),
+      );
+    });
+
+    test('mixed sync/async circular chains are detected', () async {
+      bridge.registerAsyncSingleton<MixedAsyncA>(
+        () async => MixedAsyncA(await bridge.getAsync<MixedSyncB>()),
+      );
+      // The sync factory resolves the async dependency that is already on
+      // the resolution chain: the inner getAsync must surface a circular
+      // dependency error instead of deadlocking. The error is captured as a
+      // value so it does not surface as an unhandled async error.
+      bridge.registerFactory<MixedSyncB>(
+        () => MixedSyncB(
+          bridge.getAsync<MixedAsyncA>().then<Object?>(
+                (value) => value,
+                onError: (Object error) => error,
+              ),
+        ),
+      );
+
+      final resolved = await bridge.getAsync<MixedAsyncA>();
+      final outcome = await resolved.b.pendingAsyncA;
+      expect(outcome, isA<BridgeCircularDependencyException>());
+    });
+  });
+
+  group('Async Readiness (get_it parity)', () {
+    late ModularBridge bridge;
+
+    setUp(() {
+      bridge = ModularBridge.createIsolated();
+    });
+
+    tearDown(() async {
+      await bridge.reset();
+    });
+
+    test('eager async singletons start resolving at registration', () async {
+      var calls = 0;
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () async {
+          calls++;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+          return AsyncConfig('eager');
+        },
+        eager: true,
+      );
+
+      // Resolution started without an explicit getAsync call.
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 1);
+
+      final resolved = await bridge.getAsync<AsyncConfig>();
+      expect(resolved.value, 'eager');
+    });
+
+    test('allReady completes immediately when nothing is pending', () async {
+      await expectLater(bridge.allReady(), completes);
+      expect(bridge.allReadySync(), isTrue);
+    });
+
+    test('allReady waits for eager async singletons only', () async {
+      var eagerDone = false;
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          eagerDone = true;
+          return AsyncConfig('ready');
+        },
+        eager: true,
+      );
+      // Lazy async singletons must not block allReady.
+      bridge.registerAsyncSingleton<String>(() async => 'lazy');
+
+      await bridge.allReady();
+      expect(eagerDone, isTrue);
+      expect(bridge.allReadySync(), isTrue);
+    });
+
+    test('allReady ignores pending async factories', () async {
+      bridge.registerFactoryAsync<AsyncConfig>(
+        () => Future<AsyncConfig>.delayed(
+          const Duration(milliseconds: 50),
+          () => AsyncConfig('slow'),
+        ),
+      );
+
+      await expectLater(bridge.allReady(), completes);
+    });
+
+    test('allReady times out listing pending dependencies', () async {
+      final completer = Completer<AsyncConfig>();
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () => completer.future,
+        eager: true,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(
+        bridge.allReady(timeout: const Duration(milliseconds: 10)),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      // Let the pending resolution finish so tearDown's reset() does not
+      // wait on it forever.
+      completer.complete(AsyncConfig('late'));
+      await bridge.allReady();
+    });
+
+    test('isReady resolves async singletons and completes for sync deps',
+        () async {
+      bridge.registerSingleton<String>('sync');
+      await expectLater(bridge.isReady<String>(), completes);
+
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () async => AsyncConfig('ready'),
+      );
+      await expectLater(bridge.isReady<AsyncConfig>(), completes);
+      expect(bridge.isReadySync<AsyncConfig>(), isTrue);
+    });
+
+    test('isReadySync reports pending eager resolutions', () async {
+      final completer = Completer<AsyncConfig>();
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () => completer.future,
+        eager: true,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      expect(bridge.isReadySync<AsyncConfig>(), isFalse);
+
+      completer.complete(AsyncConfig('done'));
+      await bridge.allReady();
+      expect(bridge.isReadySync<AsyncConfig>(), isTrue);
+    });
+
+    test('unregister waits for async disposal hooks', () async {
+      var disposed = false;
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () async => AsyncConfig('x'),
+        onDispose: (_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+          disposed = true;
+        },
+      );
+
+      await bridge.getAsync<AsyncConfig>();
+      await bridge.unregister<AsyncConfig>();
+
+      expect(disposed, isTrue);
+      expect(bridge.isRegistered<AsyncConfig>(), isFalse);
+    });
+
+    test('unregister with throwOnMissing raises for absent dependencies',
+        () async {
+      await expectLater(
+        bridge.unregister<AuthService>(throwOnMissing: true),
+        throwsA(isA<BridgeDependencyNotFoundException>()),
+      );
+      // Default stays silent for backwards compatibility.
+      await expectLater(bridge.unregister<AuthService>(), completes);
+    });
+
+    test('failed async resolution is retried after failure', () async {
+      var calls = 0;
+      bridge.registerAsyncSingleton<AsyncConfig>(() async {
+        calls++;
+        if (calls == 1) throw StateError('boom');
+        return AsyncConfig('recovered');
+      });
+
+      await expectLater(bridge.getAsync<AsyncConfig>(), throwsStateError);
+      expect((await bridge.getAsync<AsyncConfig>()).value, 'recovered');
+      expect(calls, 2);
+    });
+
+    test('dispose during in-flight async resolution disposes the result',
+        () async {
+      final completer = Completer<AsyncConfig>();
+      var disposed = false;
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () => completer.future,
+        onDispose: (_) => disposed = true,
+      );
+
+      final pending = bridge.getAsync<AsyncConfig>();
+      await Future<void>.delayed(Duration.zero);
+      final resetFuture = bridge.reset();
+      completer.complete(AsyncConfig('late'));
+
+      await expectLater(pending, throwsStateError);
+      await resetFuture;
+      expect(disposed, isTrue);
     });
   });
 

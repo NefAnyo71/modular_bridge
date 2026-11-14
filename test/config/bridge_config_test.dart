@@ -259,6 +259,22 @@ void main() {
       expect(config.getString('runtime.key'), 'value');
     });
 
+    test('set/setAll with unchanged values do not emit onChanged', () async {
+      final emissions = <void>[];
+      final sub = config.onChanged.listen((_) => emissions.add(null));
+      addTearDown(sub.cancel);
+
+      config.set('appName', 'ModularBridgeApp'); // same effective value
+      config.setAll({'appName': 'ModularBridgeApp'});
+      config.switchEnvironment(
+        BridgeEnvironment.dev, // same env
+        runtimeOverrides: const {}, // empty overrides are a no-op
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emissions, isEmpty);
+    });
+
     test('getMap returns unmodifiable nested maps and getSection decodes them',
         () {
       final configWithSection = BridgeConfig(

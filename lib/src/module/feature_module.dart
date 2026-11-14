@@ -14,8 +14,9 @@ import '../event_bus/bridge_subscription.dart';
 /// ```dart
 /// final class AuthModule extends FeatureModule {
 ///   @override
-///   void registerDependencies(ModularBridge bridge) {
+///   FutureOr<void> registerDependencies(ModularBridge bridge) async {
 ///     bridge.registerLazySingleton<AuthRepository>(() => AuthRepositoryImpl());
+///     bridge.registerAsyncSingleton<SessionStore>(SessionStore.open);
 ///   }
 ///
 ///   @override
@@ -70,7 +71,12 @@ abstract class FeatureModule {
   }
 
   /// Registers module-specific dependencies into the [bridge] container.
-  void registerDependencies(ModularBridge bridge);
+  ///
+  /// May be synchronous or asynchronous: return a [Future] (or `async`
+  /// function) to perform asynchronous setup such as reading files or
+  /// contacting services before [init] runs. All registrations made inside —
+  /// including after `await` points — are attributed to this module.
+  FutureOr<void> registerDependencies(ModularBridge bridge);
 
   /// Lifecycle hook invoked after dependencies have been registered and verified.
   FutureOr<void> init(ModularBridge bridge) {}

@@ -89,7 +89,7 @@ Add `modular_bridge` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_bridge: ^0.4.0
+  modular_bridge: ^0.5.0
 ```
 
 Fetch the package:
@@ -209,6 +209,27 @@ await ModularBridge.I.registerModules([
   CoreModule(),
   AuthModule(),
 ]);
+```
+
+#### Async Module Registration
+
+`registerDependencies` may return a `Future` (`FutureOr<void>`), so modules can perform asynchronous setup — reading files, opening connections — before `init` runs. Dependencies registered after `await` points are still attributed to the correct module, and parallel `registerModule` calls never leak ownership across modules:
+
+```dart
+final class DataModule extends FeatureModule {
+  @override
+  Future<void> registerDependencies(ModularBridge bridge) async {
+    final prefs = await SharedPreferences.getInstance();
+    bridge.registerSingleton<SharedPreferences>(prefs);
+    bridge.registerAsyncSingleton<DatabaseClient>(DatabaseClient.open);
+  }
+
+  @override
+  Future<void> init(ModularBridge bridge) async {
+    final db = await bridge.getAsync<DatabaseClient>();
+    // ...
+  }
+}
 ```
 
 If a module throws during dependency registration or `init`, its subscriptions
@@ -378,18 +399,150 @@ final maybe = await bridge.tryGetAsync<FeatureFlags>();
 ```
 
 Calling `bridge.get<DatabaseClient>()` on an async dependency throws `BridgeAsyncDependencyException`.
+For transient async resources use `registerFactoryAsync<T>()` — every `getAsync` produces a fresh instance.
+
+#### Startup Readiness (`allReady` / `isReady`)
+
+Pass `eager: true` to `registerAsyncSingleton` to start resolution at registration time (like `get_it.registerSingletonAsync`). Eager async singletons participate in `allReady`, while lazy ones resolve on first `getAsync`:
+
+```dart
+bridge.registerAsyncSingleton<DatabaseClient>(
+  DatabaseClient.open,
+  eager: true,
+  onDispose: (client) => client.close(),
+);
+
+// Wait for every eager async singleton (with optional timeout):
+await bridge.allReady(timeout: const Duration(seconds: 10));
+
+// Or wait for a single dependency:
+await bridge.isReady<DatabaseClient>();
+
+// Synchronous checks:
+bridge.allReadySync();
+bridge.isReadySync<DatabaseClient>();
+```
 
 #### Request/Session Scopes (`BridgeScope`)
 
-`bridge.createScope()` creates an isolated registration context for per-request or per-session state. Scoped dependencies are invisible to `bridge.get` and to other scopes, fall back to the parent container for unregistered types, and are all disposed together:
+`bridge.createScope()` creates an isolated registration context for per-request or per-session state. Scoped dependencies are invisible to sibling scopes, fall back through the scope hierarchy to the parent container for unregistered types, and are all disposed together. Scopes support every lifecycle — including `registerAsyncSingleton` and `registerFactoryAsync`:
 
 ```dart
-final scope = bridge.createScope();
+final scope = bridge.createScope(scopeName: 'checkout');
 scope.registerSingleton<RequestContext>(RequestContext(userId: user.id));
-scope.registerLazySingleton<CheckoutSession>(() => CheckoutSession(scope.get<CartService>()));
+scope.registerAsyncSingleton<SessionCache>(SessionCache.open);
 
+final session = await scope.getAsync<SessionCache>();
 // ... handle the request ...
-await scope.dispose(); // disposes every scoped dependency
+await scope.dispose(); // disposes every scoped dependency, awaiting async hooks
+```
+
+Scopes form a hierarchy via `scope.createChildScope()` — a child resolves child → parent → bridge — and `bridge.createScopeAsync(init)` runs async setup, seals the scope against later registrations, and disposes it automatically if `init` fails:
+
+```dart
+final requestScope = await bridge.createScopeAsync((scope) async {
+  scope.registerSingleton<AuthToken>(await tokenStore.read());
+});
+```
+
+#### Scope Stack (`get_it` parity)
+
+For `get_it`-style implicit scoping, `pushNewScope` makes registrations and resolutions flow through the top scope automatically — no explicit `scope.get` calls required:
+
+```dart
+bridge.pushNewScope(scopeName: 'request', isFinal: true, init: (b) {
+  b.registerSingleton<RequestContext>(RequestContext(userId: user.id));
+});
+
+// bridge.get<T>() now resolves through the request scope first.
+final ctx = bridge.get<RequestContext>();
+
+await bridge.popScope(); // disposes scope-local dependencies
+```
+
+Additional stack controls: `pushNewScopeAsync`, `popScope`, `dropScope(name)`, `popScopesTill(name)`, `currentScope`, `currentScopeName`, `activeScopeNames`, `onScopeChanged`, and `resetScope()`.
+
+Instances implementing `Disposable` (`FutureOr<void> onDispose()`) are disposed automatically when no explicit `onDispose` hook was registered — matching `get_it`'s `Disposable` support. `bridge.allowReassignment = true` globally permits re-registration without `override: true`, mirroring `get_it.allowReassignment`.
+
+#### Startup Orchestration (`signalsReady` / `dependsOn`)
+
+Async singletons can opt into manual readiness signalling, and any registration can declare dependencies that must resolve before its factory runs:
+
+```dart
+class SessionService implements WillSignalReady {
+  Future<void> init() async {
+    // ... heavy async work ...
+    ModularBridge.I.signalReady(this);
+  }
+}
+
+bridge.registerSingleton<SessionService>(
+  SessionService(),
+  signalsReady: true, // allReady() waits for signalReady(this)
+);
+
+bridge.registerSingletonWithDependencies<CheckoutFlow>(
+  factoryFunc: (b) => CheckoutFlow(b.get<CartService>(), b.get<PaymentGateway>()),
+  dependsOn: [
+    DependencyKey(CartService),
+    DependencyKey(PaymentGateway),
+  ],
+);
+
+await bridge.allReady(timeout: const Duration(seconds: 10));
+```
+
+`registerSingletonAsync` / `registerLazySingletonAsync` are provided as `get_it` aliases for eager and lazy async singletons.
+
+#### Parameterized Factories
+
+Factories can receive two runtime parameters, mirroring `get_it.registerFactoryParam`. Cached variants memoize per `(param1, param2)` pair:
+
+```dart
+bridge.registerCachedFactoryParam<HttpClient, String, int>(
+  (baseUrl, timeoutSeconds) => HttpClient(baseUrl, timeoutSeconds),
+);
+
+final client = bridge.getParam<HttpClient, String, int>(
+  param1: 'https://api.example.com',
+  param2: 30,
+);
+```
+
+`registerFactoryParamAsync` / `registerCachedFactoryParamAsync` pair with `getParamAsync`. Parameters are not part of the registration key — one registration serves all parameter combinations.
+
+#### Bulk Resolution & Dependency Graph
+
+```dart
+final allClients = bridge.getAll<HttpClient>();        // every named/unnamed registration
+final allAsync = await bridge.getAllAsync<Session>();  // async-aware variant
+
+final graph = bridge.dependencyGraph();
+if (graph.hasCycles) {
+  debugPrint('Dependency cycles: ${graph.cycles}');
+}
+```
+
+`registerModules` now initializes modules in dependency order (topological sort) and rejects cyclic module graphs.
+
+#### Lazy Singleton Reset
+
+```dart
+await bridge.resetLazySingleton<UserRepository>();
+await bridge.resetLazySingletons();          // active scope or root
+await bridge.resetScope(disposeInstances: false);
+```
+
+#### Config-Bound Dependencies
+
+`registerConfigBinding` ties a DI registration to a `BridgeConfig` key — the cached value is automatically reset and re-decoded on every effective config change:
+
+```dart
+bridge.registerConfigBinding<ApiConfig>(
+  configKey: 'api',
+  decoder: (v) => ApiConfig.fromMap(v as Map),
+  onDispose: (cfg) => cfg.close(),
+);
 ```
 
 #### Event Replay & One-Shot Waits
@@ -681,11 +834,33 @@ try {
 | `bridge.override<T>(mock)` | Replaces an existing dependency with a mock instance in one line |
 | `bridge.get<T>()` or `bridge<T>()` | Resolves the dependency of type `T` (or throws `BridgeDependencyException`) |
 | `bridge.tryGet<T>()` | Returns `null` only when `T` is not registered; dependency creation errors propagate |
-| `bridge.registerAsyncSingleton<T>(factory)` | Registers an async singleton resolved via `getAsync<T>()` |
+| `bridge.registerAsyncSingleton<T>(factory, {eager})` | Registers an async singleton resolved via `getAsync<T>()`; `eager: true` starts resolution immediately |
+| `bridge.registerSingletonAsync<T>` / `registerLazySingletonAsync<T>` | `get_it` aliases for eager / lazy async singletons |
+| `bridge.registerFactoryAsync<T>(factory)` | Registers an async transient factory — fresh instance per `getAsync` |
+| `bridge.registerFactoryParam` / `registerCachedFactoryParam` (+`Async`) | Parameterized factories resolved via `getParam`/`getParamAsync` |
+| `bridge.getParam` / `getParamAsync` | Resolves a parameterized factory with `(param1, param2)` |
+| `bridge.getAll<T>()` / `getAllAsync<T>()` | Resolves every visible registration of a type |
+| `bridge.dependencyGraph()` | `dependsOn` graph snapshot with cycle detection |
+| `bridge.assertRegistered` / `assertAllReadySync` / `pendingReadinessKeys` | Test helpers (`@visibleForTesting`) |
 | `bridge.getAsync<T>()` / `tryGetAsync<T>()` | Async resolution; concurrent calls share one in-flight factory |
-| `bridge.createScope()` | Creates a `BridgeScope` for request/session-scoped dependencies |
+| `bridge.allReady({timeout})` / `allReadySync()` | Waits for / checks all readiness-tracked registrations |
+| `bridge.isReady<T>({timeout})` / `isReadySync<T>()` | Per-dependency readiness check |
+| `bridge.signalReady(instance)` | Manually completes a `signalsReady` / `WillSignalReady` registration |
+| `bridge.registerSingletonWithDependencies<T>` | Registers a singleton gated on `dependsOn` keys |
+| `bridge.createScope()` / `createScopeAsync(init)` | Creates a `BridgeScope` (optionally with async sealed setup) |
+| `bridge.pushNewScope` / `popScope` / `dropScope` / `popScopesTill` | `get_it`-style implicit scope stack |
+| `bridge.currentScope` / `activeScopeNames` / `onScopeChanged` | Scope stack introspection and change callback |
+| `bridge.resetScope()` / `resetLazySingleton(s)` | Clears current-scope registrations / resets lazy singletons |
+| `bridge.registerConfigBinding<T>` | Config-key-bound dependency auto-reset on config change |
+| `bridge.diagnosticsReport()` | Structured registrations/scopes/modules/pending-async snapshot |
+| `scope.createChildScope()` | Creates a nested scope resolving child → parent → bridge |
+| `scope.registerAsyncSingleton` / `registerFactoryAsync` | Full async lifecycle support inside scopes |
+| `bridge.unregister<T>()` | Async-safe unregister that awaits disposal hooks |
+| `bridge.dispose()` | Permanently disposes the container (use `reset()` to keep it usable) |
 | `bridge.onLatest<E>()` | Event stream replaying the latest `E` to each new listener |
-| `bridge.once<E>({timeout})` | Completes with the next `E` event or throws `TimeoutException` |
+| `bridge.once<E>({timeout})` | Completes with the next `E` event or throws `TimeoutException`/`StateError` on dispose |
+| `bus.hasListeners<E>({includeCatchAll})` | Checks for managed subscriptions; opt-in catch-all matching |
+| `bus.clearReplayHistory()` | Releases retained latest-event references |
 | `bridge.onModulesReady(cb)` | Callback fired whenever all modules finish registering |
 | `bridge.moduleDependents(type)` | Lists modules that declare `type` as a dependency |
 | `bridge.registeredDependencies` | Snapshot of all registered `DependencyKey`s |

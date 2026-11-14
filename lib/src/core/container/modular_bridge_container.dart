@@ -9,6 +9,8 @@ import '../../module/feature_module.dart';
 import '../exceptions/bridge_exceptions.dart';
 import 'bridge_scope.dart';
 import 'dependency_descriptor.dart';
+import 'dependency_graph.dart';
+import 'resolution_context.dart';
 
 /// Central dependency injection container, module coordinator, and event router.
 ///
@@ -20,7 +22,14 @@ class ModularBridge {
     BridgeConfig? config,
     BridgeEventBus? eventBus,
   })  : _config = config ?? BridgeConfig(environment: BridgeEnvironment.dev),
-        _eventBus = eventBus ?? BridgeEventBus();
+        _eventBus = eventBus ?? BridgeEventBus() {
+    _configValueSubscription =
+        _config.onChanged.listen((_) => _notifyConfigBindings());
+    _configSwapSubscription = _configController.stream.listen((_) {
+      _resubscribeConfigBindings();
+      _notifyConfigBindings();
+    });
+  }
 
   static ModularBridge _instance = ModularBridge();
 
@@ -42,7 +51,180 @@ class ModularBridge {
 
   /// Creates a [BridgeScope] for registering request/session-scoped
   /// dependencies that are invisible to [get] and disposed together.
-  BridgeScope createScope() => BridgeScope(this);
+  BridgeScope createScope({String? scopeName}) {
+    _ensureActive();
+    return BridgeScope(this, scopeName: scopeName);
+  }
+
+  /// Creates a [BridgeScope], runs [init] against it, seals it against
+  /// further registrations, and returns it.
+  ///
+  /// If [init] throws, the scope is disposed before the error propagates.
+  Future<BridgeScope> createScopeAsync([
+    FutureOr<void> Function(BridgeScope scope)? init,
+  ]) async {
+    final scope = createScope();
+    try {
+      if (init != null) {
+        await init(scope);
+      }
+      scope.seal();
+      return scope;
+    } catch (_) {
+      await scope.dispose();
+      rethrow;
+    }
+  }
+
+  /// Creates a new registration scope and makes it the active scope, mirroring
+  /// `get_it.pushNewScope`.
+  ///
+  /// While a scope is on [scopeStack], registrations made through this bridge
+  /// are stored in the top scope and resolutions check the scope chain before
+  /// falling back to the root registry.
+  ///
+  /// [init] runs synchronously after the scope is pushed; [dispose] runs when
+  /// the scope is popped or dropped. Set [isFinal] to seal the scope against
+  /// later registrations.
+  BridgeScope pushNewScope({
+    String? scopeName,
+    void Function(ModularBridge bridge)? init,
+    FutureOr<void> Function()? dispose,
+    bool isFinal = false,
+  }) {
+    _ensureActive();
+    final scope = BridgeScope(
+      this,
+      parent: currentScope,
+      scopeName: scopeName,
+      onDisposeCallback: dispose,
+    );
+    _scopeStack.add(scope);
+    _notifyScopeChanged(true);
+    try {
+      init?.call(this);
+      if (isFinal) scope.seal();
+    } catch (_) {
+      _scopeStack.remove(scope);
+      unawaited(scope.dispose());
+      _notifyScopeChanged(false);
+      rethrow;
+    }
+    return scope;
+  }
+
+  /// Async variant of [pushNewScope]; [init] may return a [Future].
+  Future<BridgeScope> pushNewScopeAsync({
+    String? scopeName,
+    FutureOr<void> Function(ModularBridge bridge)? init,
+    FutureOr<void> Function()? dispose,
+  }) async {
+    _ensureActive();
+    final scope = BridgeScope(
+      this,
+      parent: currentScope,
+      scopeName: scopeName,
+      onDisposeCallback: dispose,
+    );
+    _scopeStack.add(scope);
+    _notifyScopeChanged(true);
+    try {
+      if (init != null) {
+        await init(this);
+      }
+    } catch (_) {
+      _scopeStack.remove(scope);
+      await scope.dispose();
+      _notifyScopeChanged(false);
+      rethrow;
+    }
+    return scope;
+  }
+
+  /// The currently active scope, or `null` when the root registry is active.
+  BridgeScope? get currentScope =>
+      _scopeStack.isEmpty ? null : _scopeStack.last;
+
+  /// Name of the currently active scope, or `null` when the root registry is
+  /// active or the top scope is unnamed.
+  String? get currentScopeName => currentScope?.scopeName;
+
+  /// Names of scopes currently on the scope stack, bottom to top.
+  List<String> get activeScopeNames => _scopeStack
+      .map((s) => s.scopeName ?? 'scope#${identityHashCode(s)}')
+      .toList(growable: false);
+
+  /// Optional callback invoked after every scope stack push/pop, mirroring
+  /// `get_it.onScopeChanged`. The boolean is `true` for pushes.
+  void Function(bool pushed)? onScopeChanged;
+
+  void _notifyScopeChanged(bool pushed) {
+    try {
+      onScopeChanged?.call(pushed);
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'modular_bridge',
+          context: ErrorDescription('While running onScopeChanged callback'),
+        ),
+      );
+    }
+  }
+
+  /// Disposes and removes the top scope, reactivating the previous scope.
+  Future<void> popScope() async {
+    _ensureActive();
+    if (_scopeStack.isEmpty) {
+      throw StateError('Cannot pop a scope: the scope stack is empty.');
+    }
+    final scope = _scopeStack.removeLast();
+    try {
+      await scope.dispose();
+    } finally {
+      _notifyScopeChanged(false);
+    }
+  }
+
+  /// Disposes and removes the named scope and every scope above it.
+  Future<void> dropScope(String scopeName) async {
+    _ensureActive();
+    final index = _scopeStack.indexWhere((s) => s.scopeName == scopeName);
+    if (index < 0) {
+      throw BridgeScopeNotFoundException(scopeName);
+    }
+    while (_scopeStack.length > index) {
+      await popScope();
+    }
+  }
+
+  /// Pops scopes until the scope named [name] becomes active.
+  ///
+  /// When [inclusive] is true the named scope itself is also popped.
+  /// Returns `false` when no scope with [name] exists.
+  Future<bool> popScopesTill(String name, {bool inclusive = true}) async {
+    _ensureActive();
+    final index = _scopeStack.indexWhere((s) => s.scopeName == name);
+    if (index < 0) return false;
+    final targetLength = inclusive ? index : index + 1;
+    while (_scopeStack.length > targetLength) {
+      await popScope();
+    }
+    return true;
+  }
+
+  /// Finds a live scope by name, searching the stack first and then any
+  /// tracked explicit scopes.
+  BridgeScope? findScope(String scopeName) {
+    for (final scope in _scopeStack.reversed) {
+      if (scope.scopeName == scopeName) return scope;
+    }
+    for (final scope in _liveScopes) {
+      if (scope.scopeName == scopeName && !scope.isDisposed) return scope;
+    }
+    return null;
+  }
 
   /// Sets the global instance, primarily used for test harnesses.
   @visibleForTesting
@@ -65,25 +247,41 @@ class ModularBridge {
 
   final Map<DependencyKey, DependencyDescriptor<dynamic>> _registry = {};
   final Map<String, FeatureModule> _modules = {};
-  final List<DependencyKey> _resolutionStack = [];
   final List<FutureOr<void> Function(ModularBridge bridge)> _readyCallbacks =
       [];
-  String? _currentlyRegisteringModule;
-  bool _modulesReadyNotified = false;
+  final List<BridgeScope> _scopeStack = [];
+  final Set<BridgeScope> _liveScopes = {};
+  final List<Future<void> Function()> _configBindings = [];
+  late StreamSubscription<void> _configValueSubscription;
+  late StreamSubscription<BridgeConfig> _configSwapSubscription;
+  int _registrationCounter = 0;
   int _registrationDepth = 0;
+  bool _modulesReadyNotified = false;
+  bool _isDisposed = false;
 
-  /// Zone key holding the async-local chain of in-flight async dependency
-  /// resolutions, tagged with the owning bridge so isolated containers never
-  /// interfere. Unlike [_resolutionStack] (used by synchronous resolution),
-  /// zone values are scoped per async execution context, so concurrent
-  /// [getAsync] calls in unrelated zones never see each other's chains —
-  /// while genuine circular async dependencies are still detected.
-  static final Object _asyncChainZoneKey = Object();
+  /// When `true`, registering an already-registered dependency silently
+  /// replaces it (equivalent to passing `override: true` everywhere),
+  /// mirroring `get_it.allowReassignment`.
+  ///
+  /// Defaults to `false`. Scope registrations consult this flag on the root
+  /// bridge as well.
+  bool allowReassignment = false;
 
-  List<(ModularBridge, DependencyKey)> get _asyncChain =>
-      Zone.current[_asyncChainZoneKey]
-          as List<(ModularBridge, DependencyKey)>? ??
-      const [];
+  /// Zone key holding the name of the [FeatureModule] currently executing
+  /// `registerDependencies`/`init`. Zone values propagate across `await`
+  /// boundaries, so dependencies registered by an async module body are still
+  /// attributed to the correct owner even when module registrations run in
+  /// parallel.
+  static final Object _moduleOwnerZoneKey = Object();
+
+  String? get _currentModuleOwner =>
+      Zone.current[_moduleOwnerZoneKey] as String?;
+
+  /// Module owner visible to [BridgeScope] registrations.
+  ///
+  /// Internal bridge between the zone-based module context and scope-local
+  /// descriptors; not part of the public API contract.
+  String? get currentModuleOwnerForScope => _currentModuleOwner;
 
   /// The active [BridgeConfig] instance.
   BridgeConfig get config => _config;
@@ -106,47 +304,229 @@ class ModularBridge {
   List<DependencyKey> get registeredDependencies =>
       List<DependencyKey>.unmodifiable(_registry.keys);
 
+  /// Registration metadata for dependencies owned by the root registry.
+  List<DependencyInfo> get dependencyInfo => _registry.values
+      .map(DependencyInfo.fromDescriptor)
+      .toList(growable: false);
+
+  /// Whether [dispose] has been called on this container.
+  bool get isDisposed => _isDisposed;
+
   /// Updates or reinitializes the [BridgeConfig].
   ///
   /// The previous config is **not** disposed automatically — dispose it
   /// yourself if it is no longer needed. Subscribers are notified via
   /// [onConfigChanged] so they can migrate to the new instance's streams.
+  /// Config-bound dependencies registered via [registerConfigBinding] are
+  /// reset so they re-decode on next resolution.
   void setConfig(BridgeConfig newConfig) {
+    _ensureActive();
     _config = newConfig;
     _configController.add(newConfig);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CONFIG-BOUND DEPENDENCIES
+  // ---------------------------------------------------------------------------
+
+  /// Registers a lazy singleton whose value is decoded from [BridgeConfig]
+  /// and automatically reset whenever the effective configuration changes.
+  ///
+  /// This is the DI-side counterpart of `config.onChanged`: the next
+  /// resolution after a config change produces a fresh decoded value and the
+  /// previous instance's `onDispose` hook runs.
+  void registerConfigBinding<T extends Object>({
+    required String configKey,
+    required T Function(dynamic value) decoder,
+    dynamic defaultValue,
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool signalsReady = false,
+  }) {
+    final scope = currentScope;
+    final key = DependencyKey(T, instanceName);
+    Future<void> reset() {
+      if (scope != null) {
+        return scope.resetLazySingleton<T>(
+          instanceName: instanceName,
+          disposeHooks: true,
+        );
+      }
+      return _resetLazySingletonByKey(key, disposeHooks: true);
+    }
+
+    if (scope != null) {
+      scope.registerLazySingleton<T>(
+        () => decoder(
+            _config.get<dynamic>(configKey, defaultValue: defaultValue)),
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+      );
+    } else {
+      registerLazySingleton<T>(
+        () => decoder(
+            _config.get<dynamic>(configKey, defaultValue: defaultValue)),
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+      );
+    }
+    _configBindings.add(reset);
+  }
+
+  void _resubscribeConfigBindings() {
+    unawaited(_configValueSubscription.cancel());
+    _configValueSubscription =
+        _config.onChanged.listen((_) => _notifyConfigBindings());
+  }
+
+  void _notifyConfigBindings() {
+    if (_configBindings.isEmpty) return;
+    final resets = List<Future<void> Function()>.of(_configBindings);
+    unawaited(Future.wait(resets.map((reset) async {
+      try {
+        await reset();
+      } catch (error, stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'modular_bridge',
+            context:
+                ErrorDescription('While resetting config-bound dependency'),
+          ),
+        );
+      }
+    })));
+  }
+
+  Future<void> _resetLazySingletonByKey(
+    DependencyKey key, {
+    required bool disposeHooks,
+  }) async {
+    final descriptor = _registry[key];
+    if (descriptor == null) return;
+    await descriptor.resetLazy(disposeHooks: disposeHooks);
+  }
+
+  // ---------------------------------------------------------------------------
+  // SCOPE TRACKING (internal)
+  // ---------------------------------------------------------------------------
+
+  /// Registers a live scope for diagnostics and config-binding lookups.
+  ///
+  /// Called by [BridgeScope]; not part of the public API contract.
+  void trackScope(BridgeScope scope) {
+    _liveScopes.add(scope);
+  }
+
+  /// Removes a scope from live tracking after disposal.
+  ///
+  /// Called by [BridgeScope]; not part of the public API contract.
+  void untrackScope(BridgeScope scope) {
+    _liveScopes.remove(scope);
   }
 
   // ---------------------------------------------------------------------------
   // DEPENDENCY REGISTRATION
   // ---------------------------------------------------------------------------
 
+  void _register<T>(
+    DependencyLifecycle lifecycle, {
+    required DependencyKey key,
+    required bool override,
+    T Function()? factory,
+    Future<T> Function()? asyncFactory,
+    T? instance,
+    void Function(T instance)? onDispose,
+    bool eagerAsync = false,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+    T Function(Object? param1, Object? param2)? paramFactory,
+    Future<T> Function(Object? param1, Object? param2)? paramAsyncFactory,
+    bool paramCached = false,
+  }) {
+    _ensureActive();
+    final existing = _registry[key];
+    if (existing != null) {
+      if (!override && !allowReassignment) {
+        throw BridgeDependencyAlreadyRegisteredException(T,
+            instanceName: key.name);
+      }
+      unawaited(existing.dispose());
+    }
+
+    _registry[key] = DependencyDescriptor<T>(
+      key: key,
+      lifecycle: lifecycle,
+      registrationIndex: _registrationCounter++,
+      factory: factory,
+      asyncFactory: asyncFactory,
+      instance: instance,
+      ownerModuleName: _currentModuleOwner,
+      onDispose: onDispose,
+      eagerAsync: eagerAsync,
+      signalsReady: signalsReady,
+      dependsOn: List.unmodifiable(dependsOn),
+      onCreated: onCreated,
+      paramFactory: paramFactory,
+      paramAsyncFactory: paramAsyncFactory,
+      paramCached: paramCached,
+    );
+
+    if (eagerAsync && lifecycle == DependencyLifecycle.asyncSingleton) {
+      // Resolve inside a resolution frame so self-dependent eager factories
+      // are detected instead of deadlocking on their own in-flight future.
+      unawaited(resolveWithFrameAsync(
+        this,
+        key,
+        () => _registry[key]!.resolveAsync(),
+      ).then((_) {}, onError: (_) {}));
+    }
+  }
+
+  BridgeScope? get _activeScope => currentScope;
+
   /// Registers an existing [instance] as an eager singleton for type [T].
   ///
   /// Set [override] to `true` to replace any existing registration.
   /// An optional [onDispose] callback can be provided to release resources.
+  /// Pass `signalsReady: true` (or implement [WillSignalReady]) to require a
+  /// manual `signalReady(instance)` before [allReady] completes.
   void registerSingleton<T extends Object>(
     T instance, {
     String? instanceName,
     bool override = false,
     void Function(T instance)? onDispose,
+    bool? signalsReady,
+    void Function(T instance)? onCreated,
   }) {
-    final key = DependencyKey(T, instanceName);
-    if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T,
-          instanceName: instanceName);
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerSingleton<T>(
+        instance,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+        onCreated: onCreated,
+      );
+      return;
     }
-
-    if (override && _registry.containsKey(key)) {
-      _registry[key]?.dispose();
-    }
-
-    _registry[key] = DependencyDescriptor<T>(
-      key: key,
-      lifecycle: DependencyLifecycle.singleton,
+    _register<T>(
+      DependencyLifecycle.singleton,
+      key: DependencyKey(T, instanceName),
       factory: () => instance,
       instance: instance,
-      ownerModuleName: _currentlyRegisteringModule,
+      override: override,
       onDispose: onDispose,
+      signalsReady: signalsReady ?? instance is WillSignalReady,
+      onCreated: onCreated,
     );
   }
 
@@ -158,24 +538,79 @@ class ModularBridge {
     String? instanceName,
     bool override = false,
     void Function(T instance)? onDispose,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
   }) {
-    final key = DependencyKey(T, instanceName);
-    if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T,
-          instanceName: instanceName);
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerLazySingleton<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
     }
-
-    if (override && _registry.containsKey(key)) {
-      _registry[key]?.dispose();
-    }
-
-    _registry[key] = DependencyDescriptor<T>(
-      key: key,
-      lifecycle: DependencyLifecycle.lazySingleton,
+    _register<T>(
+      DependencyLifecycle.lazySingleton,
+      key: DependencyKey(T, instanceName),
       factory: factory,
-      ownerModuleName: _currentlyRegisteringModule,
+      override: override,
       onDispose: onDispose,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
     );
+  }
+
+  /// Registers a singleton whose factory runs only after [dependsOn]
+  /// dependencies are ready, mirroring `get_it.registerSingletonWithDependencies`.
+  ///
+  /// The factory receives this bridge; resolution is triggered immediately.
+  void registerSingletonWithDependencies<T extends Object>({
+    required T Function(ModularBridge bridge) factoryFunc,
+    required Iterable<DependencyKey> dependsOn,
+    String? instanceName,
+    bool override = false,
+    bool signalsReady = false,
+    void Function(T instance)? onDispose,
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerSingletonWithDependencies<T>(
+        factoryFunc: (s) => factoryFunc(this),
+        dependsOn: dependsOn,
+        instanceName: instanceName,
+        override: override,
+        signalsReady: signalsReady,
+        onDispose: onDispose,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    registerLazySingleton<T>(
+      () => factoryFunc(this),
+      instanceName: instanceName,
+      override: override,
+      onDispose: onDispose,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+    );
+    final key = DependencyKey(T, instanceName);
+    final descriptor = _registry[key];
+    final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
+    descriptor?.pendingResult = pending;
+    unawaited(pending.whenComplete(() {
+      if (identical(descriptor?.pendingResult, pending)) {
+        descriptor?.pendingResult = null;
+      }
+    }));
   }
 
   /// Registers a transient factory for type [T].
@@ -185,54 +620,405 @@ class ModularBridge {
     T Function() factory, {
     String? instanceName,
     bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
   }) {
-    final key = DependencyKey(T, instanceName);
-    if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T,
-          instanceName: instanceName);
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerFactory<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
     }
-
-    if (override && _registry.containsKey(key)) {
-      _registry[key]?.dispose();
-    }
-
-    _registry[key] = DependencyDescriptor<T>(
-      key: key,
-      lifecycle: DependencyLifecycle.factory,
+    _register<T>(
+      DependencyLifecycle.factory,
+      key: DependencyKey(T, instanceName),
       factory: factory,
-      ownerModuleName: _currentlyRegisteringModule,
+      override: override,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
     );
   }
 
   /// Registers an asynchronous singleton for type [T].
   ///
-  /// The [factory] is invoked on the first [getAsync] call and the resulting
-  /// future is cached, so concurrent resolutions share a single in-flight
-  /// operation. Resolve with [getAsync]; calling [get] on this dependency
-  /// throws [BridgeAsyncDependencyException].
+  /// The [factory] is invoked lazily on the first [getAsync] call and the
+  /// resulting future is cached, so concurrent resolutions share a single
+  /// in-flight operation. Resolve with [getAsync]; calling [get] on this
+  /// dependency throws [BridgeAsyncDependencyException].
+  ///
+  /// Pass `eager: true` to start the resolution immediately at registration
+  /// time (like `get_it.registerSingletonAsync`); eager async singletons
+  /// participate in [allReady].
   void registerAsyncSingleton<T extends Object>(
     Future<T> Function() factory, {
     String? instanceName,
     bool override = false,
     void Function(T instance)? onDispose,
+    bool eager = false,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
   }) {
-    final key = DependencyKey(T, instanceName);
-    if (_registry.containsKey(key) && !override) {
-      throw BridgeDependencyAlreadyRegisteredException(T,
-          instanceName: instanceName);
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerAsyncSingleton<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        eager: eager,
+        signalsReady: signalsReady,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
     }
-
-    if (override && _registry.containsKey(key)) {
-      _registry[key]?.dispose();
-    }
-
-    _registry[key] = DependencyDescriptor<T>(
-      key: key,
-      lifecycle: DependencyLifecycle.asyncSingleton,
+    _register<T>(
+      DependencyLifecycle.asyncSingleton,
+      key: DependencyKey(T, instanceName),
       asyncFactory: factory,
-      ownerModuleName: _currentlyRegisteringModule,
+      override: override,
       onDispose: onDispose,
+      eagerAsync: eager,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
     );
+  }
+
+  /// Registers a lazy asynchronous singleton for type [T].
+  ///
+  /// Alias for [registerAsyncSingleton] with `eager: false`, mirroring
+  /// `get_it.registerLazySingletonAsync`.
+  void registerLazySingletonAsync<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    registerAsyncSingleton<T>(
+      factory,
+      instanceName: instanceName,
+      override: override,
+      onDispose: onDispose,
+      eager: false,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+    );
+  }
+
+  /// Registers an eager asynchronous singleton for type [T].
+  ///
+  /// Alias for [registerAsyncSingleton] with `eager: true`, mirroring
+  /// `get_it.registerSingletonAsync`.
+  void registerSingletonAsync<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    registerAsyncSingleton<T>(
+      factory,
+      instanceName: instanceName,
+      override: override,
+      onDispose: onDispose,
+      eager: true,
+      signalsReady: signalsReady,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+    );
+  }
+
+  /// Registers an asynchronous transient factory for type [T].
+  ///
+  /// Every [getAsync] call produces a new instance. Async factories are
+  /// never cached and do not participate in [allReady].
+  void registerFactoryAsync<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerFactoryAsync<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    _register<T>(
+      DependencyLifecycle.asyncFactory,
+      key: DependencyKey(T, instanceName),
+      asyncFactory: factory,
+      override: override,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+    );
+  }
+
+  /// Registers a transient factory that receives two parameters at
+  /// resolution time, mirroring `get_it.registerFactoryParam`.
+  ///
+  /// Resolve with [getParam]; parameters are not part of the registration
+  /// key, so multiple parameter combinations share one registration.
+  void registerFactoryParam<T extends Object, P1, P2>(
+    T Function(P1 param1, P2 param2) factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerFactoryParam<T, P1, P2>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    _register<T>(
+      DependencyLifecycle.factory,
+      key: DependencyKey(T, instanceName),
+      factory: () => throw StateError(
+          'Parameter factory ${DependencyKey(T, instanceName)} requires '
+          'getParam(param1:, param2:).'),
+      override: override,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+      paramFactory: (p1, p2) => factory(p1 as P1, p2 as P2),
+    );
+  }
+
+  /// Registers a parameterized factory whose results are cached per
+  /// `(param1, param2)` pair, mirroring `get_it.registerCachedFactoryParam`.
+  void registerCachedFactoryParam<T extends Object, P1, P2>(
+    T Function(P1 param1, P2 param2) factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerCachedFactoryParam<T, P1, P2>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    _register<T>(
+      DependencyLifecycle.factory,
+      key: DependencyKey(T, instanceName),
+      factory: () => throw StateError(
+          'Cached parameter factory ${DependencyKey(T, instanceName)} '
+          'requires getParam(param1:, param2:).'),
+      override: override,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+      paramFactory: (p1, p2) => factory(p1 as P1, p2 as P2),
+      paramCached: true,
+    );
+  }
+
+  /// Registers an async parameterized transient factory.
+  void registerFactoryParamAsync<T extends Object, P1, P2>(
+    Future<T> Function(P1 param1, P2 param2) factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerFactoryParamAsync<T, P1, P2>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    _register<T>(
+      DependencyLifecycle.asyncFactory,
+      key: DependencyKey(T, instanceName),
+      asyncFactory: () => throw StateError(
+          'Async parameter factory ${DependencyKey(T, instanceName)} '
+          'requires getParamAsync(param1:, param2:).'),
+      override: override,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+      paramAsyncFactory: (p1, p2) => factory(p1 as P1, p2 as P2),
+    );
+  }
+
+  /// Registers an async parameterized factory cached per parameter pair.
+  void registerCachedFactoryParamAsync<T extends Object, P1, P2>(
+    Future<T> Function(P1 param1, P2 param2) factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.registerCachedFactoryParamAsync<T, P1, P2>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+      return;
+    }
+    _register<T>(
+      DependencyLifecycle.asyncFactory,
+      key: DependencyKey(T, instanceName),
+      asyncFactory: () => throw StateError(
+          'Cached async parameter factory ${DependencyKey(T, instanceName)} '
+          'requires getParamAsync(param1:, param2:).'),
+      override: override,
+      dependsOn: dependsOn,
+      onCreated: onCreated,
+      paramAsyncFactory: (p1, p2) => factory(p1 as P1, p2 as P2),
+      paramCached: true,
+    );
+  }
+
+  /// Resolves a parameterized factory registered via
+  /// [registerFactoryParam]/[registerCachedFactoryParam].
+  T getParam<T extends Object, P1, P2>({
+    required P1 param1,
+    required P2 param2,
+    String? instanceName,
+  }) {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.getParam<T, P1, P2>(
+        param1: param1,
+        param2: param2,
+        instanceName: instanceName,
+      );
+    }
+    return getParamFromRoot<T, P1, P2>(
+      param1: param1,
+      param2: param2,
+      instanceName: instanceName,
+    );
+  }
+
+  /// Root-registry parameter resolution used as the scope fallback target.
+  T getParamFromRoot<T extends Object, P1, P2>({
+    required P1 param1,
+    required P2 param2,
+    String? instanceName,
+  }) {
+    _ensureActive();
+    final key = DependencyKey(T, instanceName);
+    final descriptor = _registry[key];
+    if (descriptor == null) {
+      throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
+    }
+    return _resolveDescriptorRootSyncParam<T, P1, P2>(
+        key, descriptor, param1, param2);
+  }
+
+  T _resolveDescriptorRootSyncParam<T, P1, P2>(
+    DependencyKey key,
+    DependencyDescriptor<dynamic> descriptor,
+    P1 param1,
+    P2 param2,
+  ) {
+    if (!descriptor.isParamFactory) {
+      throw StateError(
+          'Dependency ${key.toString()} is not a parameterized factory.');
+    }
+    if (descriptor.paramFactory == null) {
+      throw BridgeAsyncDependencyException(key.type);
+    }
+    return resolveWithFrame(this, key, () {
+      _resolveDependsOnSync(descriptor);
+      return descriptor.resolveParam(param1, param2);
+    }) as T;
+  }
+
+  /// Asynchronously resolves a parameterized factory.
+  ///
+  /// Works for both synchronous and asynchronous parameter factories.
+  Future<T> getParamAsync<T extends Object, P1, P2>({
+    required P1 param1,
+    required P2 param2,
+    String? instanceName,
+  }) {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.getParamAsync<T, P1, P2>(
+        param1: param1,
+        param2: param2,
+        instanceName: instanceName,
+      );
+    }
+    return getParamAsyncFromRoot<T, P1, P2>(
+      param1: param1,
+      param2: param2,
+      instanceName: instanceName,
+    );
+  }
+
+  /// Root-registry async parameter resolution used as the scope fallback.
+  Future<T> getParamAsyncFromRoot<T extends Object, P1, P2>({
+    required P1 param1,
+    required P2 param2,
+    String? instanceName,
+  }) {
+    _ensureActive();
+    final key = DependencyKey(T, instanceName);
+    final descriptor = _registry[key];
+    if (descriptor == null) {
+      throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
+    }
+    return _resolveDescriptorRootAsyncParam<T, P1, P2>(
+        key, descriptor, param1, param2);
+  }
+
+  Future<T> _resolveDescriptorRootAsyncParam<T, P1, P2>(
+    DependencyKey key,
+    DependencyDescriptor<dynamic> descriptor,
+    P1 param1,
+    P2 param2,
+  ) {
+    return resolveWithFrameAsync<dynamic>(this, key, () async {
+      await _resolveDependsOnAsync(descriptor);
+      if (descriptor.paramAsyncFactory != null) {
+        return descriptor.resolveParamAsync(param1, param2);
+      }
+      return descriptor.resolveParam(param1, param2);
+    }).then((value) => value as T);
   }
 
   /// Replaces an existing dependency with a mock or test instance in a single line.
@@ -257,32 +1043,90 @@ class ModularBridge {
   ///
   /// Throws [BridgeDependencyNotFoundException] if no matching dependency was registered.
   /// Throws [BridgeCircularDependencyException] if a circular reference is encountered.
+  /// Throws [BridgeAsyncDependencyException] for async lifecycles — use [getAsync].
   T get<T extends Object>({String? instanceName}) {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.get<T>(instanceName: instanceName);
+    }
+    return getFromRoot<T>(instanceName: instanceName);
+  }
+
+  /// Root-registry resolution used when no scope is active and as the scope
+  /// fallback target.
+  T getFromRoot<T extends Object>({String? instanceName}) {
+    _ensureActive();
     final key = DependencyKey(T, instanceName);
     final descriptor = _registry[key];
-
     if (descriptor == null) {
       throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
     }
+    return _resolveDescriptorRootSync(key, descriptor) as T;
+  }
 
-    if (descriptor.lifecycle == DependencyLifecycle.asyncSingleton) {
-      throw BridgeAsyncDependencyException(T);
+  Object? _resolveDescriptorRootSync(
+      DependencyKey key, DependencyDescriptor<dynamic> descriptor) {
+    if (descriptor.lifecycle == DependencyLifecycle.asyncSingleton ||
+        descriptor.lifecycle == DependencyLifecycle.asyncFactory) {
+      throw BridgeAsyncDependencyException(key.type);
     }
+    return resolveWithFrame(this, key, () {
+      _resolveDependsOnSync(descriptor);
+      return descriptor.resolve();
+    });
+  }
 
-    if (_resolutionStack.contains(key)) {
-      throw BridgeCircularDependencyException(
-        T,
-        _resolutionStack.map((k) => k.type).toList(),
-      );
-    }
+  Future<Object?> _resolveDescriptorRootAsync(
+      DependencyKey key, DependencyDescriptor<dynamic> descriptor) {
+    return resolveWithFrameAsync(this, key, () async {
+      await _resolveDependsOnAsync(descriptor);
+      if (descriptor.lifecycle != DependencyLifecycle.asyncSingleton &&
+          descriptor.lifecycle != DependencyLifecycle.asyncFactory) {
+        return descriptor.resolve();
+      }
+      return descriptor.resolveAsync();
+    });
+  }
 
-    _resolutionStack.add(key);
-    try {
-      final resolved = descriptor.resolve();
-      return resolved as T;
-    } finally {
-      _resolutionStack.removeLast();
+  void _resolveDependsOnSync(DependencyDescriptor<dynamic> descriptor) {
+    for (final dep in descriptor.dependsOn) {
+      final result = _resolveKeyRoot(dep, async: false);
+      if (result is Future<Object?>) {
+        throw BridgeAsyncDependencyException(dep.type);
+      }
     }
+  }
+
+  Future<void> _resolveDependsOnAsync(
+      DependencyDescriptor<dynamic> descriptor) async {
+    for (final dep in descriptor.dependsOn) {
+      await _resolveKeyRoot(dep, async: true);
+    }
+  }
+
+  /// Resolves a dependency identified by [key] against the root registry.
+  ///
+  /// Internal resolver used for `dependsOn` orchestration and scope fallback.
+  FutureOr<Object?> resolveDependencyKeyFromRoot(
+    DependencyKey key, {
+    required bool async,
+  }) {
+    return _resolveKeyRoot(key, async: async);
+  }
+
+  FutureOr<Object?> _resolveKeyRoot(
+    DependencyKey key, {
+    required bool async,
+  }) {
+    final descriptor = _registry[key];
+    if (descriptor == null) {
+      throw BridgeDependencyNotFoundException(key.type, instanceName: key.name);
+    }
+    if (async) {
+      return _resolveDescriptorRootAsync(key, descriptor);
+    }
+    return _resolveDescriptorRootSync(key, descriptor);
   }
 
   /// Attempts to resolve an instance of type [T], returning `null` if it is
@@ -295,58 +1139,34 @@ class ModularBridge {
 
   /// Asynchronously resolves an instance of type [T].
   ///
-  /// Works for every lifecycle: synchronous dependencies are resolved
-  /// immediately and wrapped in a future, while
-  /// [DependencyLifecycle.asyncSingleton] dependencies share a single cached
-  /// in-flight resolution.
+  /// Works for every lifecycle: synchronous dependencies resolve immediately
+  /// and are wrapped in a future, while async lifecycles share a single
+  /// cached in-flight resolution (singletons) or produce a new instance per
+  /// call (factories).
   ///
   /// Throws [BridgeDependencyNotFoundException] if no matching dependency was
-  /// registered and [BridgeCircularDependencyException] on dependency loops.
-  Future<T> getAsync<T extends Object>({String? instanceName}) async {
+  /// registered and [BridgeCircularDependencyException] on dependency loops —
+  /// including loops that cross synchronous and asynchronous boundaries or
+  /// [BridgeScope] hierarchies.
+  Future<T> getAsync<T extends Object>({String? instanceName}) {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.getAsync<T>(instanceName: instanceName);
+    }
+    return getAsyncFromRoot<T>(instanceName: instanceName);
+  }
+
+  /// Root-registry async resolution used when no scope is active.
+  Future<T> getAsyncFromRoot<T extends Object>({String? instanceName}) {
+    _ensureActive();
     final key = DependencyKey(T, instanceName);
     final descriptor = _registry[key];
-
     if (descriptor == null) {
       throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
     }
-
-    // Synchronous lifecycles cannot participate in async circular chains:
-    // their factories can only call the synchronous [get].
-    if (descriptor.lifecycle != DependencyLifecycle.asyncSingleton) {
-      return (await descriptor.resolveAsync()) as T;
-    }
-
-    // Detect circular async chains within this async context first —
-    // awaiting an in-flight future that (transitively) depends on itself
-    // would deadlock.
-    final chain = _asyncChain;
-    if (chain.any((e) => identical(e.$1, this) && e.$2 == key)) {
-      throw BridgeCircularDependencyException(
-        T,
-        chain
-            .where((e) => identical(e.$1, this))
-            .map((e) => e.$2.type)
-            .toList(),
-      );
-    }
-
-    // An in-flight or completed async resolution is shared by all callers,
-    // so concurrent resolutions reuse the same underlying future.
-    if (descriptor.hasAsyncResolution) {
-      return (await descriptor.resolveAsync()) as T;
-    }
-
-    return runZoned(
-      () async {
-        return (await descriptor.resolveAsync()) as T;
-      },
-      zoneValues: {
-        _asyncChainZoneKey: <(ModularBridge, DependencyKey)>[
-          ...chain,
-          (this, key),
-        ],
-      },
-    );
+    return _resolveDescriptorRootAsync(key, descriptor)
+        .then((value) => value as T);
   }
 
   /// Attempts to asynchronously resolve an instance of type [T], returning
@@ -354,6 +1174,33 @@ class ModularBridge {
   Future<T?> tryGetAsync<T extends Object>({String? instanceName}) async {
     if (!isRegistered<T>(instanceName: instanceName)) return null;
     return getAsync<T>(instanceName: instanceName);
+  }
+
+  /// Resolves every registration of type [T] visible from the current
+  /// resolution context — including named instances — nearest scope first.
+  List<T> getAll<T extends Object>() {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.getAll<T>();
+    }
+    return _registry.keys
+        .where((key) => key.type == T)
+        .map((key) => getFromRoot<T>(instanceName: key.name))
+        .toList();
+  }
+
+  /// Asynchronously resolves every registration of type [T] visible from the
+  /// current resolution context.
+  Future<List<T>> getAllAsync<T extends Object>() async {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.getAllAsync<T>();
+    }
+    final keys = _registry.keys.where((key) => key.type == T).toList();
+    return Future.wait(
+        keys.map((key) => getAsyncFromRoot<T>(instanceName: key.name)));
   }
 
   /// Callable syntax shortcut for [get].
@@ -367,15 +1214,356 @@ class ModularBridge {
 
   /// Checks whether a dependency of type [T] is registered.
   bool isRegistered<T extends Object>({String? instanceName}) {
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.isRegistered<T>(instanceName: instanceName);
+    }
+    return isRegisteredFromRoot<T>(instanceName: instanceName);
+  }
+
+  /// Root-registry registration check used as the scope fallback target.
+  bool isRegisteredFromRoot<T extends Object>({String? instanceName}) {
+    return _registry.containsKey(DependencyKey(T, instanceName));
+  }
+
+  DependencyDescriptor<dynamic>? findDescriptorFromRoot(DependencyKey key) =>
+      _registry[key];
+
+  DependencyDescriptor<dynamic>? findDescriptorByInstanceFromRoot(
+      Object instance) {
+    for (final descriptor in _registry.values) {
+      if (identical(descriptor.cachedInstance, instance)) return descriptor;
+    }
+    return null;
+  }
+
+  /// Returns `true` when [T] has no pending asynchronous resolution.
+  ///
+  /// For async singletons this means the instance is cached and any required
+  /// readiness signal has been sent. Throws
+  /// [BridgeDependencyNotFoundException] when [T] is not registered.
+  bool isReadySync<T extends Object>({String? instanceName}) {
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.isReadySync<T>(instanceName: instanceName);
+    }
+    final descriptor = _requireDescriptor<T>(instanceName: instanceName);
+    return descriptor.isReady;
+  }
+
+  /// Returns a [Future] that completes when the dependency of type [T] is
+  /// ready for synchronous use.
+  ///
+  /// Synchronous lifecycles complete immediately unless they depend on other
+  /// registrations or use `signalsReady`. Async singletons start their
+  /// resolution if needed. An optional [timeout] throws a
+  /// [TimeoutException] when readiness is not reached in time.
+  Future<void> isReady<T extends Object>({
+    String? instanceName,
+    Duration? timeout,
+  }) {
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.isReady<T>(instanceName: instanceName, timeout: timeout);
+    }
+    final descriptor = _requireDescriptor<T>(instanceName: instanceName);
+    Future<void> ready;
+    if (descriptor.lifecycle == DependencyLifecycle.asyncSingleton) {
+      ready = descriptor.readiness(startAsyncResolution: true);
+    } else if (descriptor.signalsReady ||
+        descriptor.dependsOn.isNotEmpty ||
+        descriptor.pendingResult != null) {
+      ready = descriptor.readiness();
+    } else {
+      ready = Future<void>.value();
+    }
+    if (timeout != null) {
+      return ready.timeout(
+        timeout,
+        onTimeout: () => throw BridgeWaitingTimeOutException(
+          duration: timeout,
+          pending: descriptor.isReady
+              ? const []
+              : [DependencyKey(T, instanceName).toString()],
+          ready: descriptor.isReady
+              ? [DependencyKey(T, instanceName).toString()]
+              : const [],
+        ),
+      );
+    }
+    return ready;
+  }
+
+  /// Returns a [Future] that completes when every readiness-tracked
+  /// registration has finished.
+  ///
+  /// This includes eager or in-flight async singletons, `signalsReady`
+  /// registrations, and `registerSingletonWithDependencies` orchestrations.
+  /// Lazy async singletons that were never started and async transient
+  /// factories do not participate unless they were explicitly marked.
+  ///
+  /// An optional [timeout] throws a [TimeoutException] listing the
+  /// dependencies that were still pending.
+  Future<void> allReady({
+    Duration? timeout,
+    bool ignorePendingAsyncCreation = false,
+  }) {
+    Future<void> ready;
+    if (ignorePendingAsyncCreation) {
+      ready = Future<void>.value();
+    } else {
+      ready = Future.wait(
+        _readinessDescriptors()
+            .where(_countsForAllReady)
+            .map((d) => d.readiness()),
+      ).then((_) {});
+    }
+    if (timeout != null) {
+      return ready.timeout(
+        timeout,
+        onTimeout: () {
+          final counted = _readinessDescriptors().where(_countsForAllReady);
+          return throw BridgeWaitingTimeOutException(
+            duration: timeout,
+            pending: counted
+                .where((d) => !d.isReady)
+                .map((d) => d.key.toString())
+                .toList(growable: false),
+            ready: counted
+                .where((d) => d.isReady)
+                .map((d) => d.key.toString())
+                .toList(growable: false),
+          );
+        },
+      );
+    }
+    return ready;
+  }
+
+  /// Synchronous counterpart of [allReady].
+  bool allReadySync({bool ignorePendingAsyncCreation = false}) {
+    if (ignorePendingAsyncCreation) return true;
+    return _readinessDescriptors()
+        .every((d) => !_countsForAllReady(d) || d.isReady);
+  }
+
+  List<DependencyDescriptor<dynamic>> _readinessDescriptors() {
+    final descriptors =
+        List<DependencyDescriptor<dynamic>>.of(_registry.values);
+    for (final scope in _liveScopes) {
+      if (!scope.isDisposed) {
+        descriptors.addAll(scope.localDescriptors);
+      }
+    }
+    return descriptors;
+  }
+
+  bool _countsForAllReady(DependencyDescriptor<dynamic> d) {
+    if (d.isReady) return false;
+    switch (d.lifecycle) {
+      case DependencyLifecycle.asyncSingleton:
+        return d.eagerAsync ||
+            d.hasAsyncResolution ||
+            d.signalsReady ||
+            d.pendingResult != null;
+      case DependencyLifecycle.asyncFactory:
+      case DependencyLifecycle.factory:
+        return false;
+      case DependencyLifecycle.singleton:
+      case DependencyLifecycle.lazySingleton:
+        return d.signalsReady || d.pendingResult != null;
+    }
+  }
+
+  /// Manually signals that a [signalsReady] registration is ready.
+  ///
+  /// When [instance] is provided, the matching cached instance is located in
+  /// the active scope chain or root registry. When `null`, every pending
+  /// manual readiness signal is completed — mirroring `get_it.signalReady()`.
+  void signalReady([Object? instance]) {
+    final scope = _activeScope;
+    if (scope != null) {
+      scope.signalReady(instance);
+      return;
+    }
+    _signalReadyRoot(instance);
+  }
+
+  /// Root-registry signal used as the scope fallback target.
+  void signalReadyFromRoot() {
+    for (final descriptor in _registry.values) {
+      if (descriptor.signalsReady && !descriptor.isReady) {
+        descriptor.signalReady();
+      }
+    }
+  }
+
+  void _signalReadyRoot(Object? instance) {
+    if (instance == null) {
+      signalReadyFromRoot();
+      return;
+    }
+    final descriptor = findDescriptorByInstanceFromRoot(instance);
+    if (descriptor == null) {
+      throw ArgumentError.value(
+        instance,
+        'instance',
+        'No registered dependency owns this instance.',
+      );
+    }
+    if (!descriptor.signalsReady) {
+      throw ArgumentError.value(
+        instance,
+        'instance',
+        'This instance is not registered with signalsReady: true.',
+      );
+    }
+    if (descriptor.isReady) {
+      throw StateError('This instance was already signalled ready.');
+    }
+    descriptor.signalReady();
+  }
+
+  DependencyDescriptor<dynamic> _requireDescriptor<T extends Object>(
+      {String? instanceName}) {
     final key = DependencyKey(T, instanceName);
-    return _registry.containsKey(key);
+    final descriptor = _registry[key];
+    if (descriptor == null) {
+      throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
+    }
+    return descriptor;
+  }
+
+  // ---------------------------------------------------------------------------
+  // RESET & CLEANUP
+  // ---------------------------------------------------------------------------
+
+  /// Clears the cached instance of a lazy singleton while keeping the
+  /// registration alive, so the next resolution recreates it.
+  ///
+  /// Operates on the active scope when one is pushed, otherwise on the root
+  /// registry. An optional [disposingFunction] overrides the registered
+  /// `onDispose` for this reset.
+  Future<void> resetLazySingleton<T extends Object>({
+    String? instanceName,
+    bool disposeHooks = true,
+    FutureOr<void> Function(T instance)? disposingFunction,
+  }) async {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.resetLazySingleton<T>(
+        instanceName: instanceName,
+        disposeHooks: disposeHooks,
+        disposingFunction: disposingFunction,
+      );
+    }
+    final descriptor = _requireDescriptor<T>(instanceName: instanceName);
+    await descriptor.resetLazy(
+      disposeHooks: disposeHooks,
+      disposingFunction: disposingFunction == null
+          ? null
+          : (dynamic instance) => disposingFunction(instance as T),
+    );
+  }
+
+  /// Resets every instantiated lazy singleton in the active scope (or the
+  /// root registry when no scope is active).
+  Future<void> resetLazySingletons({bool disposeHooks = true}) async {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.resetLazySingletons(disposeHooks: disposeHooks);
+    }
+    final targets = _registry.values
+        .where((d) =>
+            (d.lifecycle == DependencyLifecycle.lazySingleton ||
+                d.lifecycle == DependencyLifecycle.asyncSingleton) &&
+            (d.hasInstance || d.hasAsyncResolution))
+        .toList();
+    for (final descriptor in targets) {
+      await descriptor.resetLazy(disposeHooks: disposeHooks);
+    }
+  }
+
+  /// Clears all registrations in the current scope without popping it.
+  ///
+  /// When [disposeInstances] is true, cached instances and `onDispose` hooks
+  /// run in reverse registration order.
+  Future<void> resetScope({bool disposeInstances = true}) async {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.reset(disposeInstances: disposeInstances);
+    }
+    await _resetRootDependencies(disposeInstances: disposeInstances);
+  }
+
+  Future<void> _resetRootDependencies({required bool disposeInstances}) async {
+    final descriptors = _registry.values.toList()
+      ..sort((a, b) => b.registrationIndex.compareTo(a.registrationIndex));
+    if (disposeInstances) {
+      for (final descriptor in descriptors) {
+        await descriptor.dispose();
+      }
+    }
+    _registry.clear();
+    _registrationCounter = 0;
   }
 
   /// Unregisters and disposes the dependency of type [T].
-  void unregister<T extends Object>({String? instanceName}) {
+  ///
+  /// Operates on the active scope when one is pushed. Returns a [Future]
+  /// that completes when asynchronous disposal hooks have finished. Missing
+  /// registrations are silently ignored; pass `throwOnMissing: true` to get a
+  /// [BridgeDependencyNotFoundException].
+  Future<void> unregister<T extends Object>({
+    String? instanceName,
+    bool throwOnMissing = false,
+  }) async {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      if (!scope.isRegistered<T>(instanceName: instanceName)) {
+        if (throwOnMissing) {
+          throw BridgeDependencyNotFoundException(T,
+              instanceName: instanceName);
+        }
+        return;
+      }
+      // Remove the registration from whichever scope owns it; registrations
+      // that only exist on the root registry fall through to root removal.
+      final key = DependencyKey(T, instanceName);
+      var current = scope;
+      while (true) {
+        if (current.hasLocal(key)) {
+          await current.unregister<T>(instanceName: instanceName);
+          return;
+        }
+        final parent = current.parentScope;
+        if (parent == null) break;
+        current = parent;
+      }
+    }
+    await _unregisterRootDependency<T>(
+      instanceName: instanceName,
+      throwOnMissing: throwOnMissing,
+    );
+  }
+
+  Future<void> _unregisterRootDependency<T extends Object>({
+    String? instanceName,
+    required bool throwOnMissing,
+  }) async {
     final key = DependencyKey(T, instanceName);
     final descriptor = _registry.remove(key);
-    descriptor?.dispose();
+    if (descriptor == null) {
+      if (throwOnMissing) {
+        throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
+      }
+      return;
+    }
+    await descriptor.dispose();
   }
 
   // ---------------------------------------------------------------------------
@@ -384,10 +1572,16 @@ class ModularBridge {
 
   /// Registers and initializes a single [FeatureModule].
   ///
-  /// Validates dependencies, registers bindings, and triggers [FeatureModule.init].
-  /// If registration or initialization fails, the module's resources and
-  /// dependencies are rolled back before the original error is rethrown.
+  /// Validates dependencies, awaits [FeatureModule.registerDependencies]
+  /// (which may be synchronous or asynchronous), and then triggers
+  /// [FeatureModule.init]. If registration or initialization fails, the
+  /// module's resources and dependencies are rolled back before the original
+  /// error is rethrown.
+  ///
+  /// Module registrations may run concurrently: each module's dependencies
+  /// are attributed to the correct owner via an async-local zone context.
   Future<void> registerModule(FeatureModule module) async {
+    _ensureActive();
     final moduleName = module.name;
     if (_modules.containsKey(moduleName)) {
       throw BridgeModuleAlreadyRegisteredException(moduleName);
@@ -407,22 +1601,21 @@ class ModularBridge {
     _modules[moduleName] = module;
 
     try {
-      _currentlyRegisteringModule = moduleName;
-      try {
-        module.registerDependencies(this);
-      } finally {
-        _currentlyRegisteringModule = null;
-      }
-
-      // Guard the ready hook while init runs: modules registered from inside
-      // init() must not trigger onModulesReady before the outer module
-      // finishes initializing.
-      _registrationDepth++;
-      try {
-        await module.init(this);
-      } finally {
-        _registrationDepth--;
-      }
+      // The zone value propagates across awaits inside registerDependencies
+      // and init, attributing every registration to this module even when
+      // multiple modules register concurrently.
+      await runZoned(
+        () async {
+          await module.registerDependencies(this);
+          _registrationDepth++;
+          try {
+            await module.init(this);
+          } finally {
+            _registrationDepth--;
+          }
+        },
+        zoneValues: {_moduleOwnerZoneKey: moduleName},
+      );
     } catch (_) {
       await _rollbackModuleRegistration(module);
       rethrow;
@@ -517,16 +1710,23 @@ class ModularBridge {
       );
     }
 
-    final keysToRemove = _registry.entries
+    await _removeModuleDependencies(moduleName);
+    _modules.remove(moduleName);
+  }
+
+  Future<void> _removeModuleDependencies(String moduleName) async {
+    // Module-owned dependencies may live in the root registry or in any live
+    // scope when modules were registered while a scope was active.
+    final rootKeys = _registry.entries
         .where((entry) => entry.value.ownerModuleName == moduleName)
         .map((entry) => entry.key)
         .toList();
-
-    for (final key in keysToRemove) {
-      _registry.remove(key)?.dispose();
+    for (final key in rootKeys) {
+      await _registry.remove(key)?.dispose();
     }
-
-    _modules.remove(moduleName);
+    for (final scope in _liveScopes.toList()) {
+      await scope.removeModuleDependencies(moduleName);
+    }
   }
 
   /// Sequentially registers and initializes multiple [FeatureModule] instances.
@@ -539,15 +1739,54 @@ class ModularBridge {
   /// back. To guarantee an all-or-nothing batch, wrap the call and invoke
   /// [reset] on failure.
   Future<void> registerModules(List<FeatureModule> modules) async {
+    _ensureActive();
     _registrationDepth++;
     try {
-      for (final module in modules) {
+      for (final module in _topologicalSortModules(modules)) {
         await registerModule(module);
       }
     } finally {
       _registrationDepth--;
     }
     _notifyModulesReadyIfNeeded();
+  }
+
+  /// Orders [modules] so that every module is initialized after the modules
+  /// it declares in [FeatureModule.dependencies].
+  ///
+  /// The sort is stable: modules without inter-dependencies keep their
+  /// original order. Dependencies on modules outside the batch are ignored
+  /// (they must already be registered). Throws a [StateError] when the batch
+  /// contains a dependency cycle.
+  List<FeatureModule> _topologicalSortModules(List<FeatureModule> modules) {
+    final byType = <Type, FeatureModule>{};
+    for (final module in modules) {
+      byType[module.runtimeType] = module;
+    }
+
+    final sorted = <FeatureModule>[];
+    final state = <FeatureModule, int>{}; // 0=unvisited,1=visiting,2=done
+
+    void visit(FeatureModule module) {
+      final mark = state[module];
+      if (mark == 2) return;
+      if (mark == 1) {
+        throw StateError('Circular module dependency detected involving '
+            '${module.name}.');
+      }
+      state[module] = 1;
+      for (final depType in module.dependencies) {
+        final dep = byType[depType];
+        if (dep != null) visit(dep);
+      }
+      state[module] = 2;
+      sorted.add(module);
+    }
+
+    for (final module in modules) {
+      visit(module);
+    }
+    return sorted;
   }
 
   /// Checks whether a module of type [M] is currently registered.
@@ -649,15 +1888,7 @@ class ModularBridge {
     await _eventBus.cancelSubscriptionsForOwner(moduleName);
 
     // 3. Remove all dependencies registered on behalf of this module
-    final keysToRemove = _registry.entries
-        .where((entry) => entry.value.ownerModuleName == moduleName)
-        .map((entry) => entry.key)
-        .toList();
-
-    for (final key in keysToRemove) {
-      final descriptor = _registry.remove(key);
-      descriptor?.dispose();
-    }
+    await _removeModuleDependencies(moduleName);
 
     _modules.remove(moduleName);
     if (_modules.isEmpty) {
@@ -693,9 +1924,119 @@ class ModularBridge {
   Future<T> once<T extends BridgeEvent>({Duration? timeout}) =>
       _eventBus.once<T>(timeout: timeout);
 
+  /// Whether at least one active managed subscription listens to events of
+  /// type [T]. See [BridgeEventBus.hasListeners] for matching semantics.
+  bool hasListeners<T extends BridgeEvent>() => _eventBus.hasListeners<T>();
+
   // ---------------------------------------------------------------------------
-  // RESET & CLEANUP
+  // DIAGNOSTICS
   // ---------------------------------------------------------------------------
+
+  /// Returns a structured snapshot of container health for debugging and
+  /// test assertions.
+  BridgeDiagnosticsReport diagnosticsReport() {
+    final registrations = <DependencyInfo>[
+      ...dependencyInfo,
+      for (final scope in _liveScopes)
+        if (!scope.isDisposed) ...scope.dependencyInfo,
+    ];
+    return BridgeDiagnosticsReport(
+      registrations: registrations,
+      moduleNames: activeModuleNames,
+      activeScopeNames: [
+        for (final scope in _liveScopes)
+          if (!scope.isDisposed)
+            scope.scopeName ?? 'scope#${identityHashCode(scope)}',
+      ],
+      scopeStack: activeScopeNames,
+      activeSubscriptionCount: _eventBus.activeSubscriptionCount,
+      pendingAsyncResolutions: registrations
+          .where((d) => d.hasAsyncResolution && !d.isReady)
+          .map((d) => d.key.toString())
+          .toList(growable: false),
+      issues: debugLeakReport(),
+    );
+  }
+
+  /// Builds the `dependsOn` dependency graph across the root registry and
+  /// all live scopes, including cycle detection.
+  ///
+  /// Edges point from a registration to each dependency it waits on. A
+  /// dependency key is matched to nodes registered in the same scope first,
+  /// then to root registrations — mirroring resolution fallback.
+  BridgeDependencyGraph dependencyGraph() {
+    final infos = <DependencyInfo>[
+      ...dependencyInfo,
+      for (final scope in _liveScopes)
+        if (!scope.isDisposed) ...scope.dependencyInfo,
+    ];
+
+    // Index nodes by key; prefer same-scope matches during edge resolution.
+    final byKey = <DependencyKey, List<DependencyInfo>>{};
+    for (final info in infos) {
+      byKey.putIfAbsent(info.key, () => []).add(info);
+    }
+
+    DependencyInfo? resolveTarget(DependencyInfo from, DependencyKey dep) {
+      final candidates = byKey[dep];
+      if (candidates == null || candidates.isEmpty) return null;
+      for (final c in candidates) {
+        if (c.scopeName == from.scopeName) return c;
+      }
+      for (final c in candidates) {
+        if (c.scopeName == null) return c;
+      }
+      return candidates.first;
+    }
+
+    final edges = <DependencyEdge>[];
+    final adjacency = <String, List<String>>{};
+    for (final info in infos) {
+      final fromId = BridgeDependencyGraph.nodeId(info);
+      for (final dep in info.dependsOn) {
+        final target = resolveTarget(info, dep);
+        edges.add(DependencyEdge(from: info, to: dep));
+        if (target != null) {
+          adjacency
+              .putIfAbsent(fromId, () => [])
+              .add(BridgeDependencyGraph.nodeId(target));
+        }
+      }
+    }
+
+    // Iterative DFS cycle detection.
+    final cycles = <List<String>>[];
+    final visited = <String>{};
+    final stack = <String>[];
+    final onStack = <String>{};
+
+    void visit(String node) {
+      if (onStack.contains(node)) {
+        final start = stack.indexOf(node);
+        cycles.add([...stack.sublist(start), node]);
+        return;
+      }
+      if (visited.contains(node)) return;
+      visited.add(node);
+      onStack.add(node);
+      stack.add(node);
+      for (final next in adjacency[node] ?? const <String>[]) {
+        visit(next);
+      }
+      stack.removeLast();
+      onStack.remove(node);
+    }
+
+    for (final info in infos) {
+      visit(BridgeDependencyGraph.nodeId(info));
+    }
+
+    return BridgeDependencyGraph(
+      nodes: infos,
+      edges: edges,
+      cycles: cycles,
+    );
+  }
 
   /// Returns a list of detected leak/integrity issues in the container.
   ///
@@ -707,10 +2048,10 @@ class ModularBridge {
   List<String> debugLeakReport() {
     final issues = <String>[];
 
-    if (_resolutionStack.isNotEmpty) {
+    if (currentResolutionChain.isNotEmpty) {
       issues.add(
-        'Dependency resolution stack is not empty: '
-        '${_resolutionStack.map((k) => k.toString()).join(' -> ')}',
+        'Dependency resolution chain is not empty: '
+        '${currentResolutionChain.map((f) => f.key.toString()).join(' -> ')}',
       );
     }
 
@@ -720,6 +2061,40 @@ class ModularBridge {
     }
 
     return issues;
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEST HELPERS
+  // ---------------------------------------------------------------------------
+
+  /// Throws a [StateError] unless a dependency of type [T] is registered in
+  /// the current resolution context.
+  @visibleForTesting
+  void assertRegistered<T extends Object>({String? instanceName}) {
+    if (!isRegistered<T>(instanceName: instanceName)) {
+      throw StateError(
+          'Expected dependency $T${instanceName == null ? '' : ' ($instanceName)'} '
+          'to be registered, but it is not.');
+    }
+  }
+
+  /// Registration keys that still participate in readiness tracking and are
+  /// not ready yet.
+  @visibleForTesting
+  List<String> get pendingReadinessKeys => _readinessDescriptors()
+      .where((d) => _countsForAllReady(d) && !d.isReady)
+      .map((d) => d.key.toString())
+      .toList(growable: false);
+
+  /// Throws a [StateError] listing pending registrations unless
+  /// [allReadySync] returns true.
+  @visibleForTesting
+  void assertAllReadySync() {
+    if (!allReadySync()) {
+      throw StateError(
+          'Expected all readiness-tracked dependencies to be ready, but '
+          'these are still pending: ${pendingReadinessKeys.join(', ')}.');
+    }
   }
 
   /// Throws a [StateError] if [debugLeakReport] detects any issues.
@@ -734,11 +2109,20 @@ class ModularBridge {
 
   /// Completely resets the container.
   ///
-  /// Disposes all registered singletons, unregisters modules, cancels event
-  /// subscriptions, and resets the resolution stack. Ideal for test `tearDown`.
+  /// Disposes all registered singletons (waiting for in-flight async
+  /// resolutions), unregisters modules, cancels event subscriptions, and
+  /// clears the resolution state. Ideal for test `tearDown`.
   Future<void> reset() async {
-    _resolutionStack.clear();
     _registrationDepth = 0;
+    _configBindings.clear();
+
+    // Dispose scopes in reverse stack order, then any remaining live scopes.
+    while (_scopeStack.isNotEmpty) {
+      await popScope();
+    }
+    for (final scope in _liveScopes.toList().reversed) {
+      await scope.dispose();
+    }
 
     // Dispose modules in reverse order
     final moduleList = _modules.values.toList().reversed;
@@ -759,13 +2143,84 @@ class ModularBridge {
     _modules.clear();
     _modulesReadyNotified = false;
 
-    // Dispose and clear all dependency descriptors
-    for (final descriptor in _registry.values) {
-      descriptor.dispose();
+    // Dispose dependencies in reverse registration order (LIFO)
+    final descriptors = _registry.values.toList()
+      ..sort((a, b) => b.registrationIndex.compareTo(a.registrationIndex));
+    for (final descriptor in descriptors) {
+      await descriptor.dispose();
     }
     _registry.clear();
+    _registrationCounter = 0;
 
     // Clear event bus subscriptions
     await _eventBus.clearSubscriptions();
   }
+
+  /// Disposes the container: resets all state and closes the config change
+  /// stream. The event bus and the injected [BridgeConfig] are **not**
+  /// disposed — they may be shared or owned elsewhere; dispose them
+  /// separately if needed.
+  ///
+  /// After [dispose], registrations and resolutions throw a [StateError].
+  /// Calling [dispose] more than once is a no-op. Use [reset] instead when
+  /// the container should remain usable (e.g. between tests).
+  Future<void> dispose() async {
+    if (_isDisposed) return;
+    _isDisposed = true;
+    await reset();
+    await _configValueSubscription.cancel();
+    await _configSwapSubscription.cancel();
+    await _configController.close();
+  }
+
+  void _ensureActive() {
+    if (_isDisposed) {
+      throw StateError('Cannot use a disposed ModularBridge.');
+    }
+  }
+}
+
+/// Immutable diagnostics snapshot for a [ModularBridge] container.
+@immutable
+final class BridgeDiagnosticsReport {
+  /// Creates a diagnostics report.
+  const BridgeDiagnosticsReport({
+    required this.registrations,
+    required this.moduleNames,
+    required this.activeScopeNames,
+    required this.scopeStack,
+    required this.activeSubscriptionCount,
+    required this.pendingAsyncResolutions,
+    required this.issues,
+  });
+
+  /// All known dependency registrations across root and live scopes.
+  final List<DependencyInfo> registrations;
+
+  /// Registered feature module names.
+  final List<String> moduleNames;
+
+  /// Names of all live scopes (explicit and stacked).
+  final List<String> activeScopeNames;
+
+  /// Names of scopes on the active resolution stack, bottom to top.
+  final List<String> scopeStack;
+
+  /// Active event bus subscription count.
+  final int activeSubscriptionCount;
+
+  /// Dependency keys with in-flight or incomplete async resolutions.
+  final List<String> pendingAsyncResolutions;
+
+  /// Leak/integrity issues detected by [ModularBridge.debugLeakReport].
+  final List<String> issues;
+
+  /// Whether the report contains no detected issues.
+  bool get isHealthy => issues.isEmpty;
+
+  @override
+  String toString() =>
+      'BridgeDiagnosticsReport(registrations: ${registrations.length}, '
+      'modules: ${moduleNames.length}, scopes: ${activeScopeNames.length}, '
+      'pendingAsync: ${pendingAsyncResolutions.length}, issues: $issues)';
 }

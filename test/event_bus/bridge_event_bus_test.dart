@@ -173,6 +173,75 @@ void main() {
       expect(eventBus.activeSubscriptionCount, 0);
     });
 
+    test('hasListeners supports catch-all subscriptions opt-in', () async {
+      expect(eventBus.hasListeners<UserLoggedInEvent>(), isFalse);
+      expect(
+        eventBus.hasListeners<UserLoggedInEvent>(includeCatchAll: true),
+        isFalse,
+      );
+
+      final sub = eventBus.subscribe<BridgeEvent>((_) {});
+      addTearDown(sub.cancel);
+
+      // Exact matching still excludes the catch-all by default.
+      expect(eventBus.hasListeners<UserLoggedInEvent>(), isFalse);
+      expect(
+        eventBus.hasListeners<UserLoggedInEvent>(includeCatchAll: true),
+        isTrue,
+      );
+      expect(eventBus.hasListeners<BridgeEvent>(includeCatchAll: true), isTrue);
+    });
+
+    test('onLatest does not duplicate events published right after subscribe',
+        () async {
+      final received = <String>[];
+      final sub = eventBus.onLatest<UserLoggedInEvent>().listen(
+            (e) => received.add(e.email),
+          );
+      addTearDown(sub.cancel);
+
+      // Published after subscription: must arrive exactly once via live.
+      eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'live@test.com'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(received, ['live@test.com']);
+    });
+
+    test('clearReplayHistory stops replays but keeps live delivery', () async {
+      eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'old@test.com'));
+      eventBus.clearReplayHistory();
+
+      final received = <String>[];
+      final sub = eventBus.onLatest<UserLoggedInEvent>().listen(
+            (e) => received.add(e.email),
+          );
+      addTearDown(sub.cancel);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(received, isEmpty);
+
+      eventBus.publish(UserLoggedInEvent(userId: 'u2', email: 'new@test.com'));
+      await Future<void>.delayed(Duration.zero);
+      expect(received, ['new@test.com']);
+    });
+
+    test('once completes with StateError when the bus is disposed', () async {
+      final future = eventBus.once<UserLoggedInEvent>();
+      await eventBus.dispose();
+
+      await expectLater(future, throwsA(isA<StateError>()));
+    });
+
+    test('subscription cancel is idempotent and concurrency-safe', () async {
+      final sub = eventBus.subscribe<UserLoggedInEvent>((_) {});
+
+      await Future.wait([sub.cancel(), sub.cancel()]);
+      await sub.cancel();
+
+      expect(sub.isCanceled, isTrue);
+      expect(eventBus.activeSubscriptionCount, 0);
+    });
+
     test('disposed bus rejects new subscriptions and ignores publishes',
         () async {
       await eventBus.dispose();

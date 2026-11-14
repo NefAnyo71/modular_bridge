@@ -4,9 +4,13 @@ library;
 
 // Core DI & Container
 export 'src/core/container/dependency_descriptor.dart'
-    show DependencyKey, DependencyLifecycle;
-export 'src/core/container/modular_bridge_container.dart' show ModularBridge;
-export 'src/core/container/bridge_scope.dart' show BridgeScope;
+    show DependencyKey, DependencyLifecycle, Disposable;
+export 'src/core/container/modular_bridge_container.dart'
+    show ModularBridge, BridgeDiagnosticsReport;
+export 'src/core/container/bridge_scope.dart'
+    show BridgeScope, WillSignalReady, DependencyInfo;
+export 'src/core/container/dependency_graph.dart'
+    show BridgeDependencyGraph, DependencyEdge;
 
 // Exceptions
 export 'src/core/exceptions/bridge_exceptions.dart';

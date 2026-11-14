@@ -25,8 +25,13 @@ final class BridgeSubscription {
   final Type? eventType;
 
   bool _isCanceled = false;
+  Future<void>? _cancelFuture;
 
   /// Whether this subscription has been canceled.
+  ///
+  /// Becomes `true` only after the underlying stream subscription has been
+  /// successfully canceled; a failed [cancel] leaves this `false` so the
+  /// operation can be retried.
   bool get isCanceled => _isCanceled;
 
   /// Whether the subscription is temporarily paused.
@@ -47,10 +52,25 @@ final class BridgeSubscription {
   }
 
   /// Cancels the subscription, stopping event reception and releasing resources.
-  Future<void> cancel() async {
-    if (_isCanceled) return;
-    _isCanceled = true;
-    _onCancel?.call(this);
-    await _subscription.cancel();
+  ///
+  /// Idempotent and concurrency-safe: concurrent calls share the same
+  /// in-flight cancellation. If the underlying cancellation fails,
+  /// [isCanceled] stays `false` and a later call retries.
+  Future<void> cancel() {
+    final inFlight = _cancelFuture;
+    if (inFlight != null) return inFlight;
+    if (_isCanceled) return Future<void>.value();
+
+    late final Future<void> future;
+    future = _subscription.cancel().then((_) {
+      _isCanceled = true;
+      _onCancel?.call(this);
+    }).whenComplete(() {
+      if (identical(_cancelFuture, future)) {
+        _cancelFuture = null;
+      }
+    });
+    _cancelFuture = future;
+    return future;
   }
 }
