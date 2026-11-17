@@ -224,6 +224,89 @@ void main() {
       expect(created, isTrue);
     });
   });
+
+  group('Cached-resolution fast path', () {
+    test('repeated gets on cached singletons return the same instance', () {
+      bridge.registerSingleton<_ReadyService>(_ReadyService());
+      bridge.registerLazySingleton<_ReadyService>(() => _ReadyService(),
+          instanceName: 'lazy');
+
+      final first = bridge.get<_ReadyService>();
+      final second = bridge.get<_ReadyService>();
+      final lazyA = bridge.get<_ReadyService>(instanceName: 'lazy');
+      final lazyB = bridge.get<_ReadyService>(instanceName: 'lazy');
+
+      expect(identical(first, second), isTrue);
+      expect(identical(lazyA, lazyB), isTrue);
+    });
+
+    test('circular dependency through an uncached factory is still detected',
+        () {
+      bridge.registerFactory<_CycleA>(() => _CycleA(bridge.get<_CycleB>()));
+      bridge.registerFactory<_CycleB>(() => _CycleB(bridge.get<_CycleA>()));
+
+      expect(() => bridge.get<_CycleA>(),
+          throwsA(isA<BridgeCircularDependencyException>()));
+    });
+
+    test('cached singleton inside a factory cycle still detects the loop', () {
+      // _ReadyService is resolved first so it is cached; the A<->B factory
+      // cycle must still be caught by resolution frames.
+      bridge.registerSingleton<_ReadyService>(_ReadyService());
+      bridge.get<_ReadyService>();
+
+      bridge.registerFactory<_LoopA>(() => _LoopA(bridge.get<_LoopB>()));
+      bridge.registerFactory<_LoopB>(() => _LoopB(bridge.get<_LoopA>()));
+
+      expect(() => bridge.get<_LoopA>(),
+          throwsA(isA<BridgeCircularDependencyException>()));
+    });
+
+    test('async cached singleton resolves through getAsync repeatedly',
+        () async {
+      var builds = 0;
+      bridge.registerAsyncSingleton<_ReadyService>(() async {
+        builds++;
+        return _ReadyService();
+      });
+
+      final a = await bridge.getAsync<_ReadyService>();
+      final b = await bridge.getAsync<_ReadyService>();
+
+      expect(identical(a, b), isTrue);
+      expect(builds, 1);
+    });
+
+    test('scope-local cached singleton resolves repeatedly', () {
+      final scope = bridge.pushNewScope(scopeName: 'fast');
+      scope.registerSingleton<_ReadyService>(_ReadyService());
+
+      final a = bridge.get<_ReadyService>();
+      final b = bridge.get<_ReadyService>();
+
+      expect(identical(a, b), isTrue);
+    });
+  });
+}
+
+class _CycleA {
+  _CycleA(this.b);
+  final _CycleB b;
+}
+
+class _CycleB {
+  _CycleB(this.a);
+  final _CycleA a;
+}
+
+class _LoopA {
+  _LoopA(this.b);
+  final _LoopB b;
+}
+
+class _LoopB {
+  _LoopB(this.a);
+  final _LoopA a;
 }
 
 class _ReadyService {}

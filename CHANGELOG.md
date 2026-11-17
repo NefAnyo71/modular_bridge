@@ -1,3 +1,16 @@
+## Unreleased
+
+* **Resolution interceptors**: `bridge.addResolutionInterceptor` registers onion-style middleware around every public resolution (`get`, `getAsync`, `getParam`, `getParamAsync`), including scope fallthrough. Interceptors receive a `BridgeResolutionRequest` (type, instance name, arguments, async flag) and a `next` closure — they can observe, wrap, substitute, or short-circuit resolutions. Returning a `Future` on the synchronous path throws `BridgeAsyncInterceptorException`. Zero-overhead fast path when no interceptors are registered; cleared on `dispose`.
+* **`BridgeInterceptors` helpers**: ready-made interceptor factories — `BridgeInterceptors.logging()` (per-resolution log via `dart:developer.log` or a custom sink) and `BridgeInterceptors.timing()` (structured `BridgeResolutionTiming` callbacks for metrics aggregation).
+* **Performance**: cached singleton resolutions (`singleton`/`lazySingleton`/resolved `asyncSingleton` with no `dependsOn`) now skip resolution-frame zone allocation entirely — benchmark: ~+22% sync `get`, ~+90% scope-fallback and async `getAsync` throughput.
+* **Fix**: config bindings owned by a disposed `BridgeScope` are now dropped silently on config changes instead of reporting a disposal error on every change.
+* **Scoped config overrides**: `BridgeScope.setConfigValue`/`removeConfigValue`/`hasConfigOverride`/`configOverrides`/`configValue` provide per-scope configuration that shadows the global `BridgeConfig`, inherits to child scopes, and dies with the scope. `bridge.configValue<T>(key)` resolves through the active scope chain. Config-bound dependencies registered inside a scope re-decode automatically when a scope override changes.
+* **Event bus interceptors**: `BridgeEventBus.addEventInterceptor` adds onion-style publish middleware — interceptors can observe, transform, fan out (call `next` multiple times), or veto events. Vetoed events are not counted in `totalPublished`/`publishCounts` or replay history. Cleared on `dispose`.
+* **`BridgeRetryPolicy`**: `registerAsyncSingleton`, `registerSingletonAsync`, `registerLazySingletonAsync`, and `registerFactoryAsync` accept a `retryPolicy` with `maxAttempts`, `delay`, `backoff`, and a `retryIf` error filter — automatic retry for transient async factory failures.
+* **`ModularBridgeInspector` actions** (`modular_bridge_flutter`): new opt-in `onUnregisterDependency` and `onResetLazySingletons` callbacks render Unregister/Reset Singletons buttons; the widget remains read-only by default.
+* **CI**: `pana` job added to `.github/workflows/ci.yml` for continuous pub.dev score tracking; benchmark smoke step included.
+* **README**: new "Pure Dart in 60 Seconds" quickstart (`dart pub add modular_bridge` + minimal CLI example); installation snippet updated to `^0.10.0`.
+
 ## 0.10.1
 
 * Shortened `pubspec.yaml` description to fit pub.dev search-result limits (60–180 chars). No code changes.

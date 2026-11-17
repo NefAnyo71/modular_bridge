@@ -270,5 +270,146 @@ void main() {
       expect(eventBus.publishCounts[UserLoggedOutEvent], 1);
       expect(eventBus.publishCounts[OrderPlacedEvent], isNull);
     });
+
+    group('Event interceptors', () {
+      test('interceptor observes every published event', () async {
+        final seen = <BridgeEvent>[];
+        eventBus.addEventInterceptor((event, next) {
+          seen.add(event);
+          next(event);
+        });
+
+        eventBus.subscribe<UserLoggedInEvent>((_) {});
+        eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'a@b.c'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(seen, hasLength(1));
+        expect(seen.single, isA<UserLoggedInEvent>());
+      });
+
+      test('interceptor can veto an event', () async {
+        final received = <UserLoggedInEvent>[];
+        eventBus.addEventInterceptor((event, next) {
+          if (event is UserLoggedInEvent && event.userId == 'blocked') return;
+          next(event);
+        });
+        eventBus.subscribe<UserLoggedInEvent>(received.add);
+
+        eventBus.publish(UserLoggedInEvent(userId: 'blocked', email: 'x@y.z'));
+        eventBus.publish(UserLoggedInEvent(userId: 'ok', email: 'x@y.z'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(received, hasLength(1));
+        expect(received.single.userId, 'ok');
+        // Vetoed events are not counted as published.
+        expect(eventBus.totalPublished, 1);
+      });
+
+      test('interceptor can transform an event in flight', () async {
+        final received = <UserLoggedInEvent>[];
+        eventBus.addEventInterceptor((event, next) {
+          if (event is UserLoggedInEvent) {
+            next(UserLoggedInEvent(
+                userId: event.userId, email: 'rewritten@x.y'));
+            return;
+          }
+          next(event);
+        });
+        eventBus.subscribe<UserLoggedInEvent>(received.add);
+
+        eventBus.publish(UserLoggedInEvent(userId: 'u1', email: 'a@b.c'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(received.single.email, 'rewritten@x.y');
+      });
+
+      test('interceptor can fan out by calling next multiple times', () async {
+        final received = <OrderPlacedEvent>[];
+        eventBus.addEventInterceptor((event, next) {
+          next(event);
+          if (event is OrderPlacedEvent) {
+            next(OrderPlacedEvent(orderId: '${event.orderId}_copy'));
+          }
+        });
+        eventBus.subscribe<OrderPlacedEvent>(received.add);
+
+        eventBus.publish(OrderPlacedEvent(orderId: 'ord_1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(received.map((e) => e.orderId),
+            containsAll(['ord_1', 'ord_1_copy']));
+        expect(eventBus.totalPublished, 2);
+      });
+
+      test('interceptors run onion-style in registration order', () {
+        final order = <String>[];
+        eventBus
+          ..addEventInterceptor((event, next) {
+            order.add('outer-in');
+            next(event);
+            order.add('outer-out');
+          })
+          ..addEventInterceptor((event, next) {
+            order.add('inner-in');
+            next(event);
+            order.add('inner-out');
+          });
+
+        eventBus.publish(OrderPlacedEvent(orderId: 'o'));
+
+        expect(order, ['outer-in', 'inner-in', 'inner-out', 'outer-out']);
+      });
+
+      test('interceptor exceptions propagate to the publish caller', () {
+        eventBus.addEventInterceptor((event, next) {
+          throw StateError('bad interceptor');
+        });
+
+        expect(
+          () => eventBus.publish(OrderPlacedEvent(orderId: 'o')),
+          throwsStateError,
+        );
+        expect(eventBus.totalPublished, 0);
+      });
+
+      test('removeEventInterceptor and clearEventInterceptors', () {
+        var calls = 0;
+        void interceptor(BridgeEvent event, void Function(BridgeEvent) next) {
+          calls++;
+          next(event);
+        }
+
+        eventBus.addEventInterceptor(interceptor);
+        eventBus.publish(OrderPlacedEvent(orderId: 'a'));
+        expect(calls, 1);
+
+        expect(eventBus.removeEventInterceptor(interceptor), isTrue);
+        expect(eventBus.removeEventInterceptor(interceptor), isFalse);
+        eventBus.publish(OrderPlacedEvent(orderId: 'b'));
+        expect(calls, 1);
+
+        eventBus
+          ..addEventInterceptor(interceptor)
+          ..addEventInterceptor(interceptor);
+        expect(eventBus.eventInterceptors, hasLength(2));
+        eventBus.clearEventInterceptors();
+        eventBus.publish(OrderPlacedEvent(orderId: 'c'));
+        expect(calls, 1);
+      });
+
+      test('interceptors are cleared on dispose', () async {
+        eventBus.addEventInterceptor((event, next) => next(event));
+        await eventBus.dispose();
+        expect(eventBus.eventInterceptors, isEmpty);
+      });
+
+      test('no interceptors -> zero overhead path still delivers', () async {
+        final received = <OrderPlacedEvent>[];
+        eventBus.subscribe<OrderPlacedEvent>(received.add);
+        eventBus.publish(OrderPlacedEvent(orderId: 'plain'));
+        await Future<void>.delayed(Duration.zero);
+        expect(received.single.orderId, 'plain');
+      });
+    });
   });
 }

@@ -411,6 +411,28 @@ void main() {
       expect(bridge.get<String>(), 'enabled:true');
       expect(disposed, 1);
     });
+
+    test('config binding owned by a disposed scope is dropped silently',
+        () async {
+      final reports = <BridgeErrorReport>[];
+      final previous = bridgeErrorReporter;
+      bridgeErrorReporter = _RecordingReporter(reports);
+      addTearDown(() => bridgeErrorReporter = previous);
+
+      final scope = bridge.pushNewScope(scopeName: 'cfg');
+      bridge.registerConfigBinding<bool>(
+        configKey: 'feature.enabled',
+        decoder: (v) => v as bool,
+      );
+      await bridge.popScope();
+
+      config.switchEnvironment(BridgeEnvironment.prod);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reports, isEmpty);
+      expect(scope.isDisposed, isTrue);
+    });
   });
 
   group('Disposable & reassignment', () {
@@ -612,4 +634,13 @@ class _DiagnosticsModule extends FeatureModule {
   void registerDependencies(ModularBridge bridge) {
     bridge.registerAsyncSingleton<AsyncConfig>(() async => AsyncConfig('m'));
   }
+}
+
+class _RecordingReporter implements BridgeErrorReporter {
+  _RecordingReporter(this.reports);
+
+  final List<BridgeErrorReport> reports;
+
+  @override
+  void report(BridgeErrorReport report) => reports.add(report);
 }

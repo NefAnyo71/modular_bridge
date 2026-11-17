@@ -14,9 +14,11 @@ import '../exceptions/bridge_exceptions.dart';
 import 'bridge_scope.dart';
 import 'dependency_descriptor.dart';
 import 'dependency_event.dart';
+import 'bridge_retry_policy.dart';
 import 'dependency_graph.dart';
 import 'dependency_metrics.dart';
 import 'resolution_context.dart';
+import 'resolution_interceptor.dart';
 
 /// Central dependency injection container, module coordinator, and event router.
 ///
@@ -262,13 +264,15 @@ class ModularBridge {
       [];
   final List<BridgeScope> _scopeStack = [];
   final Set<BridgeScope> _liveScopes = {};
-  final List<Future<void> Function()> _configBindings = [];
+  final List<({BridgeScope? scope, Future<void> Function() reset})>
+      _configBindings = [];
   late StreamSubscription<void> _configValueSubscription;
   late StreamSubscription<BridgeConfig> _configSwapSubscription;
   int _registrationCounter = 0;
   int _registrationDepth = 0;
   bool _modulesReadyNotified = false;
   bool _isDisposed = false;
+  final List<BridgeResolutionInterceptor> _resolutionInterceptors = [];
 
   /// When `true`, registering an already-registered dependency silently
   /// replaces it (equivalent to passing `override: true` everywhere).
@@ -365,6 +369,24 @@ class ModularBridge {
     _configController.add(newConfig);
   }
 
+  /// Reads a configuration value with scope overrides applied.
+  ///
+  /// When a [BridgeScope] is active, its overrides (and ancestor scopes'
+  /// overrides) shadow the global [BridgeConfig]; otherwise this is
+  /// equivalent to `config.get<T>(key)`. Mirrors [BridgeConfig.get]
+  /// semantics for missing keys and type mismatches.
+  ///
+  /// Useful inside factories and modules that need request/session-scoped
+  /// configuration without plumbing the scope through manually.
+  T configValue<T>(String key, {T? defaultValue}) {
+    _ensureActive();
+    final scope = _activeScope;
+    if (scope != null) {
+      return scope.configValue<T>(key, defaultValue: defaultValue);
+    }
+    return _config.get<T>(key, defaultValue: defaultValue);
+  }
+
   // ---------------------------------------------------------------------------
   // CONFIG-BOUND DEPENDENCIES
   // ---------------------------------------------------------------------------
@@ -386,8 +408,15 @@ class ModularBridge {
   }) {
     final scope = currentScope;
     final key = DependencyKey(T, instanceName);
+    late final ({BridgeScope? scope, Future<void> Function() reset}) binding;
     Future<void> reset() {
       if (scope != null) {
+        if (scope.isDisposed) {
+          // The owning scope is gone; drop the dead binding instead of
+          // reporting a disposal error on every config change.
+          _configBindings.remove(binding);
+          return Future<void>.value();
+        }
         return scope.resetLazySingleton<T>(
           instanceName: instanceName,
           disposeHooks: true,
@@ -396,10 +425,19 @@ class ModularBridge {
       return _resetLazySingletonByKey(key, disposeHooks: true);
     }
 
+    // Reads the effective config value at resolution time so scope-local
+    // overrides (BridgeScope.setConfigValue) apply to scoped bindings.
+    dynamic readConfig() {
+      if (scope != null) {
+        return scope.configValue<dynamic>(configKey,
+            defaultValue: defaultValue);
+      }
+      return _config.get<dynamic>(configKey, defaultValue: defaultValue);
+    }
+
     if (scope != null) {
       scope.registerLazySingleton<T>(
-        () => decoder(
-            _config.get<dynamic>(configKey, defaultValue: defaultValue)),
+        () => decoder(readConfig()),
         instanceName: instanceName,
         override: override,
         onDispose: onDispose,
@@ -407,15 +445,15 @@ class ModularBridge {
       );
     } else {
       registerLazySingleton<T>(
-        () => decoder(
-            _config.get<dynamic>(configKey, defaultValue: defaultValue)),
+        () => decoder(readConfig()),
         instanceName: instanceName,
         override: override,
         onDispose: onDispose,
         signalsReady: signalsReady,
       );
     }
-    _configBindings.add(reset);
+    binding = (scope: scope, reset: reset);
+    _configBindings.add(binding);
   }
 
   void _resubscribeConfigBindings() {
@@ -426,8 +464,24 @@ class ModularBridge {
 
   void _notifyConfigBindings() {
     if (_configBindings.isEmpty) return;
-    final resets = List<Future<void> Function()>.of(_configBindings);
-    unawaited(Future.wait(resets.map((reset) async {
+    _runConfigBindingResets(_configBindings.map((binding) => binding.reset));
+  }
+
+  /// Re-decodes config-bound dependencies owned by [scope] after a
+  /// scope-local config override changes. Called by [BridgeScope]; not part
+  /// of the public API contract.
+  void notifyScopeConfigBindings(BridgeScope scope) {
+    if (_isDisposed) return;
+    final resets = _configBindings
+        .where((binding) => identical(binding.scope, scope))
+        .map((binding) => binding.reset);
+    _runConfigBindingResets(resets);
+  }
+
+  void _runConfigBindingResets(Iterable<Future<void> Function()> resets) {
+    final pending = resets.toList();
+    if (pending.isEmpty) return;
+    unawaited(Future.wait(pending.map((reset) async {
       try {
         await reset();
       } catch (error, stackTrace) {
@@ -465,6 +519,73 @@ class ModularBridge {
   /// Called by [BridgeScope]; not part of the public API contract.
   void untrackScope(BridgeScope scope) {
     _liveScopes.remove(scope);
+  }
+
+  // ---------------------------------------------------------------------------
+  // RESOLUTION INTERCEPTORS
+  // ---------------------------------------------------------------------------
+
+  /// Registers a [BridgeResolutionInterceptor] that wraps every public
+  /// resolution (`get`, `getAsync`, `getParam`, `getParamAsync`).
+  ///
+  /// Interceptors run onion-style in registration order — the first added
+  /// is outermost. Each interceptor receives a [BridgeResolutionRequest]
+  /// and a `next` closure; call `next()` to continue the chain or return a
+  /// substitute value to short-circuit resolution.
+  ///
+  /// On synchronous resolutions the interceptor must return the value
+  /// directly; returning a `Future` throws
+  /// [BridgeAsyncInterceptorException]. Async entry points accept either.
+  ///
+  /// When no interceptors are registered, resolution takes a zero-overhead
+  /// fast path.
+  void addResolutionInterceptor(BridgeResolutionInterceptor interceptor) {
+    _resolutionInterceptors.add(interceptor);
+  }
+
+  /// Removes a previously registered interceptor. Returns `true` when an
+  /// interceptor was removed.
+  bool removeResolutionInterceptor(BridgeResolutionInterceptor interceptor) =>
+      _resolutionInterceptors.remove(interceptor);
+
+  /// Removes all registered resolution interceptors.
+  void clearResolutionInterceptors() => _resolutionInterceptors.clear();
+
+  /// Unmodifiable snapshot of the currently registered interceptors, in
+  /// execution order (outermost first).
+  List<BridgeResolutionInterceptor> get resolutionInterceptors =>
+      List.unmodifiable(_resolutionInterceptors);
+
+  T _resolveInterceptedSync<T>(
+    BridgeResolutionRequest request,
+    T Function() inner,
+  ) {
+    final interceptors = _resolutionInterceptors;
+    if (interceptors.isEmpty) return inner();
+    Object? run(int index) {
+      if (index == interceptors.length) return inner();
+      final result = interceptors[index](request, () => run(index + 1));
+      if (result is Future<Object?>) {
+        throw BridgeAsyncInterceptorException(request.type);
+      }
+      return result;
+    }
+
+    return run(0) as T;
+  }
+
+  Future<T> _resolveInterceptedAsync<T>(
+    BridgeResolutionRequest request,
+    FutureOr<T> Function() inner,
+  ) async {
+    final interceptors = _resolutionInterceptors;
+    if (interceptors.isEmpty) return await inner();
+    FutureOr<Object?> run(int index) {
+      if (index == interceptors.length) return inner();
+      return interceptors[index](request, () => run(index + 1));
+    }
+
+    return await run(0) as T;
   }
 
   // ---------------------------------------------------------------------------
@@ -530,6 +651,34 @@ class ModularBridge {
   }
 
   BridgeScope? get _activeScope => currentScope;
+
+  /// Wraps [factory] with [policy] retry semantics, or returns it unchanged
+  /// when no policy is supplied.
+  static Future<T> Function() _withRetryPolicy<T>(
+    Future<T> Function() factory,
+    BridgeRetryPolicy? policy,
+  ) {
+    if (policy == null || policy.maxAttempts <= 1) return factory;
+    return () async {
+      var attempt = 0;
+      var delayMicros = policy.delay.inMicroseconds.toDouble();
+      while (true) {
+        attempt++;
+        try {
+          return await factory();
+        } catch (error) {
+          final canRetry = attempt < policy.maxAttempts &&
+              (policy.retryIf?.call(error) ?? true);
+          if (!canRetry) rethrow;
+          if (delayMicros > 0) {
+            await Future<void>.delayed(
+                Duration(microseconds: delayMicros.round()));
+          }
+          delayMicros *= policy.backoff;
+        }
+      }
+    };
+  }
 
   /// Registers an existing [instance] as an eager singleton for type [T].
   ///
@@ -742,6 +891,9 @@ class ModularBridge {
   /// Pass `eager: true` to start the resolution immediately at registration
   /// time; eager async singletons
   /// participate in [allReady].
+  ///
+  /// [retryPolicy] wraps the factory with retry/backoff semantics — useful
+  /// for network-backed dependencies that may fail transiently at startup.
   void registerAsyncSingleton<T extends Object>(
     Future<T> Function() factory, {
     String? instanceName,
@@ -751,11 +903,13 @@ class ModularBridge {
     bool signalsReady = false,
     Iterable<DependencyKey> dependsOn = const [],
     void Function(T instance)? onCreated,
+    BridgeRetryPolicy? retryPolicy,
   }) {
+    final effectiveFactory = _withRetryPolicy(factory, retryPolicy);
     final scope = _activeScope;
     if (scope != null) {
       scope.registerAsyncSingleton<T>(
-        factory,
+        effectiveFactory,
         instanceName: instanceName,
         override: override,
         onDispose: onDispose,
@@ -769,7 +923,7 @@ class ModularBridge {
     _register<T>(
       DependencyLifecycle.asyncSingleton,
       key: DependencyKey(T, instanceName),
-      asyncFactory: factory,
+      asyncFactory: effectiveFactory,
       override: override,
       onDispose: onDispose,
       eagerAsync: eager,
@@ -790,6 +944,7 @@ class ModularBridge {
     bool signalsReady = false,
     Iterable<DependencyKey> dependsOn = const [],
     void Function(T instance)? onCreated,
+    BridgeRetryPolicy? retryPolicy,
   }) {
     registerAsyncSingleton<T>(
       factory,
@@ -800,6 +955,7 @@ class ModularBridge {
       signalsReady: signalsReady,
       dependsOn: dependsOn,
       onCreated: onCreated,
+      retryPolicy: retryPolicy,
     );
   }
 
@@ -814,6 +970,7 @@ class ModularBridge {
     bool signalsReady = false,
     Iterable<DependencyKey> dependsOn = const [],
     void Function(T instance)? onCreated,
+    BridgeRetryPolicy? retryPolicy,
   }) {
     registerAsyncSingleton<T>(
       factory,
@@ -824,6 +981,7 @@ class ModularBridge {
       signalsReady: signalsReady,
       dependsOn: dependsOn,
       onCreated: onCreated,
+      retryPolicy: retryPolicy,
     );
   }
 
@@ -837,11 +995,13 @@ class ModularBridge {
     bool override = false,
     Iterable<DependencyKey> dependsOn = const [],
     void Function(T instance)? onCreated,
+    BridgeRetryPolicy? retryPolicy,
   }) {
+    final effectiveFactory = _withRetryPolicy(factory, retryPolicy);
     final scope = _activeScope;
     if (scope != null) {
       scope.registerFactoryAsync<T>(
-        factory,
+        effectiveFactory,
         instanceName: instanceName,
         override: override,
         dependsOn: dependsOn,
@@ -852,7 +1012,7 @@ class ModularBridge {
     _register<T>(
       DependencyLifecycle.asyncFactory,
       key: DependencyKey(T, instanceName),
-      asyncFactory: factory,
+      asyncFactory: effectiveFactory,
       override: override,
       dependsOn: dependsOn,
       onCreated: onCreated,
@@ -1002,18 +1162,29 @@ class ModularBridge {
     String? instanceName,
   }) {
     _ensureActive();
-    final scope = _activeScope;
-    if (scope != null) {
-      return scope.getParam<T, P1, P2>(
-        param1: param1,
-        param2: param2,
+    return _resolveInterceptedSync<T>(
+      BridgeResolutionRequest(
+        bridge: this,
+        type: T,
         instanceName: instanceName,
-      );
-    }
-    return getParamFromRoot<T, P1, P2>(
-      param1: param1,
-      param2: param2,
-      instanceName: instanceName,
+        arguments: [param1, param2],
+        isAsync: false,
+      ),
+      () {
+        final scope = _activeScope;
+        if (scope != null) {
+          return scope.getParam<T, P1, P2>(
+            param1: param1,
+            param2: param2,
+            instanceName: instanceName,
+          );
+        }
+        return getParamFromRoot<T, P1, P2>(
+          param1: param1,
+          param2: param2,
+          instanceName: instanceName,
+        );
+      },
     );
   }
 
@@ -1061,18 +1232,29 @@ class ModularBridge {
     String? instanceName,
   }) {
     _ensureActive();
-    final scope = _activeScope;
-    if (scope != null) {
-      return scope.getParamAsync<T, P1, P2>(
-        param1: param1,
-        param2: param2,
+    return _resolveInterceptedAsync<T>(
+      BridgeResolutionRequest(
+        bridge: this,
+        type: T,
         instanceName: instanceName,
-      );
-    }
-    return getParamAsyncFromRoot<T, P1, P2>(
-      param1: param1,
-      param2: param2,
-      instanceName: instanceName,
+        arguments: [param1, param2],
+        isAsync: true,
+      ),
+      () {
+        final scope = _activeScope;
+        if (scope != null) {
+          return scope.getParamAsync<T, P1, P2>(
+            param1: param1,
+            param2: param2,
+            instanceName: instanceName,
+          );
+        }
+        return getParamAsyncFromRoot<T, P1, P2>(
+          param1: param1,
+          param2: param2,
+          instanceName: instanceName,
+        );
+      },
     );
   }
 
@@ -1132,11 +1314,21 @@ class ModularBridge {
   /// Throws [BridgeAsyncDependencyException] for async lifecycles — use [getAsync].
   T get<T extends Object>({String? instanceName}) {
     _ensureActive();
-    final scope = _activeScope;
-    if (scope != null) {
-      return scope.get<T>(instanceName: instanceName);
-    }
-    return getFromRoot<T>(instanceName: instanceName);
+    return _resolveInterceptedSync<T>(
+      BridgeResolutionRequest(
+        bridge: this,
+        type: T,
+        instanceName: instanceName,
+        isAsync: false,
+      ),
+      () {
+        final scope = _activeScope;
+        if (scope != null) {
+          return scope.get<T>(instanceName: instanceName);
+        }
+        return getFromRoot<T>(instanceName: instanceName);
+      },
+    );
   }
 
   /// Root-registry resolution used when no scope is active and as the scope
@@ -1157,6 +1349,9 @@ class ModularBridge {
         descriptor.lifecycle == DependencyLifecycle.asyncFactory) {
       throw BridgeAsyncDependencyException(key.type);
     }
+    if (descriptor.isFrameFreeResolution) {
+      return descriptor.resolve();
+    }
     return resolveWithFrame(this, key, () {
       _resolveDependsOnSync(descriptor);
       return descriptor.resolve();
@@ -1165,6 +1360,9 @@ class ModularBridge {
 
   Future<Object?> _resolveDescriptorRootAsync(
       DependencyKey key, DependencyDescriptor<dynamic> descriptor) {
+    if (descriptor.isFrameFreeResolution) {
+      return descriptor.resolveAsync();
+    }
     return resolveWithFrameAsync(this, key, () async {
       await _resolveDependsOnAsync(descriptor);
       if (descriptor.lifecycle != DependencyLifecycle.asyncSingleton &&
@@ -1236,11 +1434,21 @@ class ModularBridge {
   /// [BridgeScope] hierarchies.
   Future<T> getAsync<T extends Object>({String? instanceName}) {
     _ensureActive();
-    final scope = _activeScope;
-    if (scope != null) {
-      return scope.getAsync<T>(instanceName: instanceName);
-    }
-    return getAsyncFromRoot<T>(instanceName: instanceName);
+    return _resolveInterceptedAsync<T>(
+      BridgeResolutionRequest(
+        bridge: this,
+        type: T,
+        instanceName: instanceName,
+        isAsync: true,
+      ),
+      () {
+        final scope = _activeScope;
+        if (scope != null) {
+          return scope.getAsync<T>(instanceName: instanceName);
+        }
+        return getAsyncFromRoot<T>(instanceName: instanceName);
+      },
+    );
   }
 
   /// Root-registry async resolution used when no scope is active.
@@ -2456,6 +2664,7 @@ class ModularBridge {
     await _configSwapSubscription.cancel();
     await _configController.close();
     await _dependencyEvents.close();
+    _resolutionInterceptors.clear();
   }
 
   void _ensureActive() {

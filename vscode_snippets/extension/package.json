@@ -1,0 +1,34 @@
+{
+  "name": "modular-bridge-snippets",
+  "displayName": "Modular Bridge Snippets",
+  "description": "VS Code snippets for the modular_bridge Dart/Flutter DI framework — modules, events, config, scopes and registration helpers.",
+  "version": "0.1.0",
+  "publisher": "nefantyo",
+  "license": "MIT",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Snippets"
+  ],
+  "keywords": [
+    "dart",
+    "flutter",
+    "snippets",
+    "modular_bridge",
+    "dependency-injection"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NefAnyo71/modular_bridge"
+  },
+  "contributes": {
+    "snippets": [
+      {
+        "language": "dart",
+        "path": "./snippets/modular-bridge.code-snippets"
+      }
+    ]
+  }
+}

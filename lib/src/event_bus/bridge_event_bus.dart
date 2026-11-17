@@ -5,6 +5,23 @@ import '../core/annotations.dart';
 import 'bridge_event.dart';
 import 'bridge_subscription.dart';
 
+/// Middleware for the [BridgeEventBus.publish] pipeline.
+///
+/// Interceptors run onion-style in registration order (first added =
+/// outermost). Each interceptor receives the event and a [next] closure:
+///
+/// - Call `next(event)` to deliver the event unchanged.
+/// - Call `next(otherEvent)` to transform the event in flight.
+/// - Call `next` multiple times to fan the event out.
+/// - Do not call `next` at all to veto the event — subscribers never see it
+///   and it is not counted in [BridgeEventBus.totalPublished].
+///
+/// Interceptor exceptions propagate to the [BridgeEventBus.publish] caller.
+typedef BridgeEventInterceptor = void Function(
+  BridgeEvent event,
+  void Function(BridgeEvent event) next,
+);
+
 /// Central event bus enabling decoupled communication across feature modules.
 ///
 /// Features:
@@ -29,6 +46,7 @@ class BridgeEventBus {
   final StreamController<void> _disposeController =
       StreamController<void>.broadcast();
   final List<BridgeSubscription> _activeSubscriptions = [];
+  final List<BridgeEventInterceptor> _interceptors = [];
   final Map<Type, _ReplayEntry> _lastEvents = {};
   final List<_ReplayEntry> _eventHistory = [];
   final Map<Type, int> _publishCounts = {};
@@ -65,7 +83,32 @@ class BridgeEventBus {
             (includeCatchAll && sub.eventType == BridgeEvent),
       );
 
+  /// Registers a [BridgeEventInterceptor] wrapping every [publish] call.
+  ///
+  /// Interceptors run in registration order; see [BridgeEventInterceptor]
+  /// for the veto/transform contract. When no interceptors are registered,
+  /// publishing takes a zero-overhead fast path. Cleared on [dispose].
+  void addEventInterceptor(BridgeEventInterceptor interceptor) {
+    _interceptors.add(interceptor);
+  }
+
+  /// Removes a previously registered event interceptor.
+  /// Returns `true` when an interceptor was removed.
+  bool removeEventInterceptor(BridgeEventInterceptor interceptor) =>
+      _interceptors.remove(interceptor);
+
+  /// Removes all registered event interceptors.
+  void clearEventInterceptors() => _interceptors.clear();
+
+  /// Unmodifiable snapshot of registered event interceptors, outermost first.
+  List<BridgeEventInterceptor> get eventInterceptors =>
+      List.unmodifiable(_interceptors);
+
   /// Publishes a [BridgeEvent] to all active subscribers of type [T].
+  ///
+  /// The event first passes through the registered [BridgeEventInterceptor]
+  /// chain, which may transform, duplicate, or veto it. Only events that
+  /// reach the end of the chain are counted and delivered.
   void publish<T extends BridgeEvent>(T event) {
     if (_isDisposed) {
       if (kDebugMode) {
@@ -76,6 +119,23 @@ class BridgeEventBus {
       }
       return;
     }
+    final interceptors = _interceptors;
+    if (interceptors.isEmpty) {
+      _dispatch(event);
+      return;
+    }
+    void run(int index, BridgeEvent current) {
+      if (index == interceptors.length) {
+        _dispatch(current);
+        return;
+      }
+      interceptors[index](current, (next) => run(index + 1, next));
+    }
+
+    run(0, event);
+  }
+
+  void _dispatch(BridgeEvent event) {
     _totalPublished++;
     _publishCounts[event.runtimeType] =
         (_publishCounts[event.runtimeType] ?? 0) + 1;
@@ -312,6 +372,7 @@ class BridgeEventBus {
     }
     await _eventController.close();
     await _disposeController.close();
+    _interceptors.clear();
   }
 }
 

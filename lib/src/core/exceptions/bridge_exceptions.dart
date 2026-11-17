@@ -80,6 +80,24 @@ final class BridgeAsyncDependencyException extends BridgeDependencyException {
         );
 }
 
+/// Thrown when a [BridgeResolutionInterceptor] returns a [Future] during a
+/// synchronous resolution (`get`, `getParam`).
+///
+/// Synchronous entry points cannot await middleware; either resolve through
+/// `getAsync`/`getParamAsync` or keep interceptors synchronous on the
+/// `get` path.
+final class BridgeAsyncInterceptorException extends BridgeDependencyException {
+  /// Creates a [BridgeAsyncInterceptorException] for the given [type].
+  // ignore: prefer_const_constructors_in_immutables — interpolated message is not const-evaluable.
+  BridgeAsyncInterceptorException(Type type)
+      : super(
+          'A resolution interceptor returned a Future while resolving \'$type\' '
+          'synchronously. Use `getAsync<T>()`/`getParamAsync` or keep the '
+          'interceptor synchronous on the `get<T>()` path.',
+          type: type,
+        );
+}
+
 /// Thrown when a circular dependency loop is detected during dependency resolution.
 final class BridgeCircularDependencyException
     extends BridgeDependencyException {

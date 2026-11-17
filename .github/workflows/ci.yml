@@ -25,6 +25,12 @@ jobs:
       - name: Run package tests
         run: dart test
 
+      - name: Run pana (pub.dev score)
+        run: dart pub global activate pana && pana --no-fatal-infos --no-fatal-warnings
+
+      - name: Run resolution benchmark (smoke)
+        run: dart test benchmark/
+
   analyze-and-test-flutter:
     runs-on: ubuntu-latest
     steps:

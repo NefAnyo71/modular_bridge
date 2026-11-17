@@ -17,6 +17,7 @@
 - [Architectural Overview](#-architectural-overview)
 - [Installation](#-installation)
 - [Quick Start & Step-by-Step Guide](#-quick-start--step-by-step-guide)
+- [Choosing the right registration API](#choosing-the-right-registration-api)
   - [1. Type-Safe Flavor & Environment Management (`BridgeConfig`)](#1-type-safe-flavor--environment-management-bridgeconfig)
   - [2. Isolated Feature Module Declaration (`FeatureModule`)](#2-isolated-feature-module-declaration-featuremodule)
   - [3. Decoupled Event Bus (`BridgeEventBus`)](#3-decoupled-event-bus-bridgeeventbus)
@@ -47,7 +48,8 @@ In enterprise Flutter applications, as modules (`AuthModule`, `CartModule`, `Pay
 - ✅ **Decoupled Event Bus:** Modules communicate exclusively through strongly-typed domain events, without importing each other's internal concrete classes.
 - ✅ **1-Line Mock Overrides:** Swap any registered dependency with a mock or fake via `bridge.override<T>(mockInstance)` in a single line.
 - ✅ **Async-Ready DI & Request Scopes:** `registerAsyncSingleton`/`getAsync` for asynchronous resources, plus `BridgeScope` for per-request/session dependencies that dispose together.
-- ✅ **Rich Event Primitives:** Type-safe publish/subscribe with auto-disposal, `onLatest` replay, and `once<T>()` one-shot waits.
+- ✅ **Rich Event Primitives:** Type-safe publish/subscribe with auto-disposal, `onLatest` replay, `history`, `once<T>()`, publish counters, and event interceptors.
+- ✅ **Advanced DI Controls:** Scoped config overrides, config bindings, resolution interceptors, retry policies, dependency metrics, diagnostics, and DevTools extensions.
 
 ---
 
@@ -95,9 +97,11 @@ Add both to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_bridge: ^0.9.0
+  modular_bridge: ^0.10.1
   modular_bridge_flutter: ^0.1.0   # Flutter apps only
 ```
+
+> `modular_bridge` is pure Dart and also works with `dart pub add modular_bridge`. The Flutter package is only required for widgets, context helpers, asset loaders, and the inspector.
 
 Fetch the packages:
 
@@ -116,6 +120,49 @@ Flutter apps additionally import the widget layer:
 ```dart
 import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 ```
+
+---
+
+## ⚡ Pure Dart in 60 Seconds
+
+No Flutter required — `modular_bridge` runs on the Dart VM, CLI tools, and backend servers:
+
+```bash
+dart pub add modular_bridge
+```
+
+```dart
+import 'package:modular_bridge/modular_bridge.dart';
+
+void main() async {
+  final bridge = ModularBridge.createIsolated();
+  bridge.registerLazySingleton<ApiClient>(() => ApiClient('https://api.example.com'));
+  bridge.eventBus.on<AuthEvent>().listen((e) => print('auth: ${e.userId}'));
+
+  final client = bridge.get<ApiClient>();
+  bridge.eventBus.publish(AuthEvent(userId: 'u_42'));
+
+  await bridge.dispose();
+}
+```
+
+Everything below works identically in pure Dart and Flutter — the widget layer is purely additive.
+
+### Choosing the right registration API
+
+| Need | Recommended API |
+| --- | --- |
+| One shared app-wide instance | `registerSingleton` |
+| Create once, on first use | `registerLazySingleton` |
+| Fresh instance per resolution | `registerFactory` |
+| Async resource at startup | `registerSingletonAsync` / `registerAsyncSingleton(eager: true)` |
+| Async resource on first use | `registerLazySingletonAsync` / `registerAsyncSingleton` |
+| Fresh async instance per call | `registerFactoryAsync` |
+| Per-request/session state | `BridgeScope` / `pushNewScope` |
+| Runtime parameters | `registerFactoryParam` / `getParam` |
+| Rebuild when config changes | `registerConfigBinding` |
+| Retry transient async failures | `retryPolicy: BridgeRetryPolicy(...)` |
+| Test override | `override<T>(mock)` or `createIsolated()` |
 
 ---
 
@@ -617,9 +664,33 @@ final class DebugModule extends FeatureModule {
 
 #### Inspector Hooks
 
-`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them.
+`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them. `ModularBridgeInspector` stays read-only by default; pass `onUnregisterDependency`/`onResetLazySingletons` callbacks to enable action buttons.
 
 Migrating from `get_it`? See [MIGRATION.md](MIGRATION.md) for a full cheat sheet. Run `flutter test benchmark/` for resolution throughput numbers (roughly ~1M sync `get` ops/s and ~1.5M scope-fallback ops/s on a dev machine).
+
+#### Resolution Interceptors
+
+`addResolutionInterceptor` wraps every public resolution (`get`, `getAsync`, `getParam`, `getParamAsync`, and their scope-aware paths) in onion-style middleware. This is useful for logging, metrics, feature flags, authorization-style guards, caching decorators, or test instrumentation:
+
+```dart
+bridge.addResolutionInterceptor((request, next) {
+  final sw = Stopwatch()..start();
+  try {
+    final value = next();
+    debugPrint('${request.type} resolved in ${sw.elapsedMicroseconds}µs');
+    return value;
+  } catch (e) {
+    debugPrint('${request.type} FAILED in ${sw.elapsedMicroseconds}µs: $e');
+    rethrow;
+  }
+});
+
+// Short-circuit example — substitute a mock without touching next():
+bridge.addResolutionInterceptor((request, next) =>
+    request.type == PaymentGateway ? FakePaymentGateway() : next());
+```
+
+Interceptors run in registration order (first added = outermost), receive a `BridgeResolutionRequest` (type, instance name, arguments, async flag), and may skip `next()` entirely. On synchronous resolutions they must return the value directly — returning a `Future` throws `BridgeAsyncInterceptorException`; use `getAsync`/`getParamAsync` for async middleware. When no interceptors are registered, resolution takes a zero-overhead fast path, and `dispose()` clears them. Ready-made helpers are available through `BridgeInterceptors.logging()` and `BridgeInterceptors.timing()`.
 
 #### Lazy Singleton Reset
 
@@ -640,6 +711,62 @@ bridge.registerConfigBinding<ApiConfig>(
   onDispose: (cfg) => cfg.close(),
 );
 ```
+
+##### Scoped Config Overrides
+
+`BridgeScope` supports per-scope configuration overrides — ideal for request/session-scoped settings like tenant IDs or per-user feature flags. Overrides shadow the global `BridgeConfig` for `configValue` lookups and config-bound dependencies resolved through that scope, inherit down to child scopes, and die with the scope:
+
+```dart
+final scope = bridge.pushNewScope(scopeName: 'request');
+scope.setConfigValue('tenant', 'acme');
+scope.setConfigValue('api.baseUrl', 'https://acme.api.dev');
+
+// Inside the scope (or via bridge.configValue while it's active):
+final tenant = bridge.configValue<String>('tenant');        // 'acme'
+final url = scope.configValue<String>('api.baseUrl');
+
+// Config-bound deps registered in the scope re-decode automatically
+// when an override changes:
+bridge.registerConfigBinding<ApiConfig>(
+  configKey: 'api',
+  decoder: (v) => ApiConfig.fromMap(v as Map),
+);
+scope.setConfigValue('api', {'baseUrl': 'https://acme.api.dev'});
+
+scope.removeConfigValue('tenant');  // back to global value
+```
+
+#### Event Interceptors
+
+`BridgeEventBus.addEventInterceptor` wraps the publish pipeline in onion-style middleware — observe, transform, fan out, or veto events before they reach subscribers:
+
+```dart
+bridge.eventBus.addEventInterceptor((event, next) {
+  if (event is OrderPlacedEvent && event.total < 0) return; // veto
+  debugPrint('publishing ${event.runtimeType}');
+  next(event);
+});
+```
+
+Interceptors run onion-style in registration order. They may observe an event, transform it with `next(transformedEvent)`, fan it out by calling `next` multiple times, or veto it by not calling `next`. Only events that reach the end of the chain are counted in `totalPublished`/`publishCounts` and recorded in replay history. Use `removeEventInterceptor` / `clearEventInterceptors` to manage the pipeline; all interceptors are cleared on dispose.
+
+#### Async Retry Policies
+
+`registerAsyncSingleton`/`registerSingletonAsync`/`registerLazySingletonAsync`/`registerFactoryAsync` accept a `BridgeRetryPolicy` — transient network failures at startup get automatic retry with configurable backoff:
+
+```dart
+bridge.registerAsyncSingleton<ApiClient>(
+  () => ApiClient.connect(),
+  retryPolicy: const BridgeRetryPolicy(
+    maxAttempts: 3,
+    delay: Duration(milliseconds: 200),
+    backoff: 2.0,
+    retryIf: (e) => e is SocketException,
+  ),
+);
+```
+
+`maxAttempts` includes the first attempt, `delay` is the base wait, and each retry multiplies the wait by `backoff`. `retryIf` lets you retry only transient errors. The policy also works for async registrations inside `BridgeScope`.
 
 #### Event Replay & One-Shot Waits
 
@@ -666,6 +793,21 @@ bridge.onModulesReady((b) {
 ```
 
 `BridgeConfig` also gained `onChanged` (reactive config stream), `remove(key)` for runtime overrides, persistent `set`/`setAll` overrides across environment switches, and `getMap`/`getSection` for decoding nested config maps into typed objects.
+
+`BridgeScope` supports per-scope configuration overrides for request/session values such as tenant IDs or feature flags. Overrides shadow the global config for `configValue` lookups and config-bound dependencies resolved through that scope, inherit to child scopes, and disappear with the scope:
+
+```dart
+final scope = bridge.pushNewScope(scopeName: 'request');
+scope.setConfigValue('tenant', 'acme');
+scope.setConfigValue('api.baseUrl', 'https://acme.api.dev');
+
+final tenant = bridge.configValue<String>('tenant');
+final url = scope.configValue<String>('api.baseUrl');
+
+scope.removeConfigValue('tenant');
+```
+
+Config-bound dependencies registered inside the scope are re-decoded automatically when a scope override changes.
 
 ---
 
@@ -930,14 +1072,18 @@ try {
 | `bridge.override<T>(mock)` | Replaces an existing dependency with a mock instance in one line |
 | `bridge.get<T>()` or `bridge<T>()` | Resolves the dependency of type `T` (or throws `BridgeDependencyException`) |
 | `bridge.tryGet<T>()` | Returns `null` only when `T` is not registered; dependency creation errors propagate |
-| `bridge.registerAsyncSingleton<T>(factory, {eager})` | Registers an async singleton resolved via `getAsync<T>()`; `eager: true` starts resolution immediately |
-| `bridge.registerSingletonAsync<T>` / `registerLazySingletonAsync<T>` | Eager / lazy async singleton aliases |
-| `bridge.registerFactoryAsync<T>(factory)` | Registers an async transient factory — fresh instance per `getAsync` |
+| `bridge.registerAsyncSingleton<T>(factory, {eager, retryPolicy})` | Registers an async singleton resolved via `getAsync<T>()`; `eager: true` starts resolution immediately and `retryPolicy` retries transient failures |
+| `bridge.registerSingletonAsync<T>` / `registerLazySingletonAsync<T>` | Eager / lazy async singleton aliases; both accept `retryPolicy` |
+| `bridge.registerFactoryAsync<T>(factory, {retryPolicy})` | Registers an async transient factory — fresh instance per `getAsync` with optional retry |
 | `bridge.registerFactoryParam` / `registerCachedFactoryParam` (+`Async`) | Parameterized factories resolved via `getParam`/`getParamAsync` |
 | `bridge.getParam` / `getParamAsync` | Resolves a parameterized factory with `(param1, param2)` |
 | `bridge.getAll<T>()` / `getAllAsync<T>()` | Resolves every visible registration of a type |
 | `bridge.dependencyGraph()` / `.toDot()` | `dependsOn` graph snapshot with cycle detection / Graphviz export |
 | `bridge.onDependencyEvents` | Registration change stream for inspectors |
+| `bridge.addResolutionInterceptor` / `removeResolutionInterceptor` / `clearResolutionInterceptors` | Onion-style middleware around `get`, `getAsync`, `getParam`, and `getParamAsync` |
+| `BridgeInterceptors.logging` / `BridgeInterceptors.timing` | Ready-made resolution logging and timing interceptors |
+| `bridge.eventBus.addEventInterceptor` / `removeEventInterceptor` / `clearEventInterceptors` | Onion-style publish middleware with observe/transform/fan-out/veto support |
+| `BridgeRetryPolicy` | Retry/backoff configuration for async factories |
 | `bridge.metrics` / `resetMetrics()` | Per-key + per-module resolution counts, cache hits, durations |
 | `bus.totalPublished` / `bus.publishCounts` | Event bus publish counters per runtime type |
 | `bridge.warmup()` / `warmup(ownerModule:)` | Eagerly resolves singleton-style registrations (optionally per module) |
@@ -982,6 +1128,8 @@ try {
 | `bridge.on<E>()` | Subscribes to an event stream of type `E` |
 | `module.subscribe<E>(bridge, onData)` | Scoped subscription **automatically cancelled** when the module is disposed |
 | `config.switchEnvironment(env)` | Performs a runtime hot-switch across `dev`, `staging`, and `prod` |
+| `bridge.configValue<T>(key)` | Resolves config through the active scope chain with scope overrides |
+| `scope.setConfigValue` / `removeConfigValue` / `hasConfigOverride` / `configOverrides` / `configValue` | Per-scope configuration overrides that inherit to child scopes |
 | `context.bridge` / `context.get<T>()` | Resolves container dependencies directly from `BuildContext` |
 | `context.config` | Accesses active type-safe configuration from `BuildContext` |
 
@@ -989,7 +1137,7 @@ try {
 
 ## 🤝 Contributing
 
-This project was developed with the assistance of AI tools under close human supervision — every change is reviewed, tested (`flutter analyze` + `flutter test`, currently 205 cases), and verified before release.
+This project was developed with the assistance of AI tools under close human supervision — every change is reviewed, tested (`dart analyze` + `dart test`, `flutter analyze` + `flutter test`), and verified before release.
 
 Want to contribute? Issues, pull requests, docs improvements, and bug reports are welcome on GitHub:
 

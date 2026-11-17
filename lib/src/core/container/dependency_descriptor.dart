@@ -181,6 +181,21 @@ final class DependencyDescriptor<T> {
   /// Whether this registration is a parameterized factory.
   bool get isParamFactory => paramFactory != null || paramAsyncFactory != null;
 
+  /// Whether resolution can be served from the cached instance without
+  /// running any factory or `dependsOn` orchestration.
+  ///
+  /// When true, user code cannot re-enter the container through this
+  /// resolution, so callers may skip pushing a [ResolutionFrame] — a
+  /// measurable fast path for repeated lookups of cached singletons.
+  /// Transient factories and unresolved async singletons always return
+  /// false because they can re-enter.
+  bool get isFrameFreeResolution =>
+      hasInstance &&
+      dependsOn.isEmpty &&
+      (lifecycle == DependencyLifecycle.singleton ||
+          lifecycle == DependencyLifecycle.lazySingleton ||
+          lifecycle == DependencyLifecycle.asyncSingleton);
+
   Completer<void> _readyCompleter = Completer<void>();
   T? _cachedInstance;
   Future<T>? _asyncFuture;

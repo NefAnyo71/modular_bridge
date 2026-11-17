@@ -1,0 +1,5 @@
+# Files not included in the published .vsix
+**/.*
+!**/.vscodeignore
+**/*.map
+**/node_modules/**

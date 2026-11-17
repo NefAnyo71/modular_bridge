@@ -17,6 +17,13 @@ dependencies:
     path: ../modular_bridge_flutter
 
   material_ui: any
+
+dependency_overrides:
+  # modular_bridge_flutter depends on hosted modular_bridge; the example
+  # tracks the local core package instead.
+  modular_bridge:
+    path: ../
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

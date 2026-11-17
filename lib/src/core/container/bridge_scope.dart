@@ -55,6 +55,7 @@ final class BridgeScope {
   final BridgeScope? _parent;
   final List<BridgeScope> _children = [];
   final Map<DependencyKey, DependencyDescriptor<dynamic>> _registry = {};
+  final Map<String, dynamic> _configOverrides = {};
   final Set<DependencyKey> _shadowNotified = {};
   int _registrationCounter = 0;
   bool _isDisposed = false;
@@ -89,6 +90,68 @@ final class BridgeScope {
   BridgeScope createChildScope({String? scopeName}) {
     _ensureCanRegister();
     return BridgeScope(bridge, parent: this, scopeName: scopeName);
+  }
+
+  // ---------------------------------------------------------------------------
+  // SCOPED CONFIG OVERRIDES
+  // ---------------------------------------------------------------------------
+
+  /// Sets a scope-local configuration override for [key].
+  ///
+  /// The override shadows the global [BridgeConfig] value for every
+  /// [configValue] lookup and config-bound dependency resolved through this
+  /// scope (or its descendants). Changing an override re-decodes that scope's
+  /// config-bound dependencies on next resolution.
+  ///
+  /// Overrides live and die with the scope — disposing the scope removes them.
+  void setConfigValue(String key, dynamic value) {
+    _ensureNotDisposed();
+    _configOverrides[key] = value;
+    bridge.notifyScopeConfigBindings(this);
+  }
+
+  /// Removes a scope-local override previously set via [setConfigValue].
+  ///
+  /// Returns `true` when an override existed. Config-bound dependencies of
+  /// this scope are re-decoded on next resolution.
+  bool removeConfigValue(String key) {
+    _ensureNotDisposed();
+    if (!_configOverrides.containsKey(key)) return false;
+    _configOverrides.remove(key);
+    bridge.notifyScopeConfigBindings(this);
+    return true;
+  }
+
+  /// Whether this scope (not its ancestors) currently overrides [key].
+  bool hasConfigOverride(String key) => _configOverrides.containsKey(key);
+
+  /// Unmodifiable view of this scope's own config overrides.
+  Map<String, dynamic> get configOverrides =>
+      Map<String, dynamic>.unmodifiable(_configOverrides);
+
+  /// Reads a configuration value with scope overrides applied.
+  ///
+  /// Lookup order: this scope's overrides, then ancestor scopes'
+  /// overrides, then the global [BridgeConfig]. Mirrors
+  /// [BridgeConfig.get] semantics — throws
+  /// [BridgeConfigKeyNotFoundException] when the key is absent and no
+  /// [defaultValue] is given, and [BridgeConfigTypeMismatchException] on a
+  /// type mismatch.
+  T configValue<T>(String key, {T? defaultValue}) {
+    if (_configOverrides.containsKey(key)) {
+      final value = _configOverrides[key];
+      if (value is T) return value;
+      throw BridgeConfigTypeMismatchException(
+        key: key,
+        expectedType: T,
+        actualType: value.runtimeType,
+      );
+    }
+    final parent = _parent;
+    if (parent != null) {
+      return parent.configValue<T>(key, defaultValue: defaultValue);
+    }
+    return bridge.config.get<T>(key, defaultValue: defaultValue);
   }
 
   /// Prevents further registrations on this scope after [init] completes.
@@ -626,6 +689,9 @@ final class BridgeScope {
         descriptor.lifecycle == DependencyLifecycle.asyncFactory) {
       throw BridgeAsyncDependencyException(descriptor.key.type);
     }
+    if (descriptor.isFrameFreeResolution) {
+      return descriptor.resolve();
+    }
     return resolveWithFrame(this, descriptor.key, () {
       _resolveDependsOnSync(descriptor);
       return descriptor.resolve();
@@ -634,6 +700,9 @@ final class BridgeScope {
 
   Future<Object?> _resolveDescriptorAsync(
       DependencyDescriptor<dynamic> descriptor) {
+    if (descriptor.isFrameFreeResolution) {
+      return descriptor.resolveAsync();
+    }
     return resolveWithFrameAsync(this, descriptor.key, () async {
       await _resolveDependsOnAsync(descriptor);
       if (descriptor.lifecycle != DependencyLifecycle.asyncSingleton &&

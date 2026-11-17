@@ -23,6 +23,14 @@ export 'src/core/container/dependency_graph.dart'
     show BridgeDependencyGraph, DependencyEdge;
 export 'src/core/container/dependency_metrics.dart'
     show DependencyMetrics, DependencyMetricEntry;
+export 'src/core/container/bridge_retry_policy.dart' show BridgeRetryPolicy;
+export 'src/core/container/resolution_interceptor.dart'
+    show
+        BridgeInterceptors,
+        BridgeResolutionInterceptor,
+        BridgeResolutionNext,
+        BridgeResolutionRequest,
+        BridgeResolutionTiming;
 
 // Exceptions & error reporting
 export 'src/core/errors/bridge_error_reporter.dart'
@@ -44,5 +52,6 @@ export 'src/config/env_file.dart' show parseEnvFile;
 
 // Event Bus
 export 'src/event_bus/bridge_event.dart' show BridgeEvent;
-export 'src/event_bus/bridge_event_bus.dart' show BridgeEventBus;
+export 'src/event_bus/bridge_event_bus.dart'
+    show BridgeEventBus, BridgeEventInterceptor;
 export 'src/event_bus/bridge_subscription.dart' show BridgeSubscription;
