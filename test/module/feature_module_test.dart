@@ -319,6 +319,77 @@ void main() {
       expect(bridge.isRegistered<AsyncConfig>(instanceName: 'FastModule'),
           isFalse);
     });
+
+    test(
+        'registerModules allows same-type modules when nothing depends '
+        'on the duplicated type', () async {
+      await bridge.registerModules([
+        _DupCoreModule('dup-a'),
+        _DupCoreModule('dup-b'),
+      ]);
+
+      expect(bridge.activeModuleNames, containsAll(['dup-a', 'dup-b']));
+    });
+
+    test('registerModules rejects ambiguous type-based dependencies', () async {
+      await expectLater(
+        bridge.registerModules([
+          _DupCoreModule('dup-a'),
+          _DupCoreModule('dup-b'),
+          _DupDependsModule(),
+        ]),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('cannot disambiguate'),
+        )),
+      );
+      expect(bridge.activeModuleNames, isEmpty);
+    });
+
+    test('registering a disposed module throws StateError', () async {
+      final module = SimpleTestModule();
+      await bridge.registerModule(module);
+      await bridge.unregisterModuleByName('SimpleTestModule');
+      expect(module.isDisposed, isTrue);
+
+      await expectLater(
+        bridge.registerModule(module),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('disposed FeatureModule'),
+        )),
+      );
+    });
+
+    test('registerModules(parallel: true) preserves dependency order',
+        () async {
+      final order = <String>[];
+      await bridge.registerModules(
+        [
+          _TimedModule('Base',
+              delay: const Duration(milliseconds: 30), log: order),
+          _TimedChildModule(log: order),
+          _TimedSoloModule('Solo',
+              delay: const Duration(milliseconds: 30), log: order),
+        ],
+        parallel: true,
+      );
+
+      expect(order, containsAll(['Base', 'Child', 'Solo']));
+      expect(order.indexOf('Child'), greaterThan(order.indexOf('Base')));
+    });
+
+    test('module subscribe forwards subscription options', () async {
+      final module = _PassthroughSubModule();
+      await bridge.registerModule(module);
+
+      bridge.publish(UserLoggedOutEvent(userId: 'u1'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(module.received, 1);
+    });
   });
 
   group('Module health checks', () {
@@ -375,6 +446,16 @@ void main() {
 
       await bridge.checkModuleHealth();
       expect(module.seenBridge, same(bridge));
+    });
+
+    test('checkModuleHealth reports a duration per module', () async {
+      await bridge.registerModule(_HealthModule(moduleName: 'TimedHealth'));
+
+      final results = await bridge.checkModuleHealth();
+      final result = results.singleWhere((r) => r.moduleName == 'TimedHealth');
+
+      expect(result.duration, isNotNull);
+      expect(result.duration!, greaterThanOrEqualTo(Duration.zero));
     });
 
     test('throws StateError on a disposed bridge', () async {
@@ -548,5 +629,111 @@ class _HealthModule extends FeatureModule {
     await Future<void>.delayed(Duration.zero);
     if (error != null) throw error!;
     return healthy;
+  }
+}
+
+class _DupCoreModule extends FeatureModule {
+  _DupCoreModule(this.moduleName);
+
+  final String moduleName;
+
+  @override
+  String get name => moduleName;
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+}
+
+class _DupDependsModule extends FeatureModule {
+  @override
+  String get name => 'DupDepends';
+
+  @override
+  List<Type> get dependencies => [_DupCoreModule];
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+}
+
+class _TimedModule extends FeatureModule {
+  _TimedModule(this.moduleName,
+      {required this.log, this.delay = Duration.zero});
+
+  final String moduleName;
+  final List<String> log;
+  final Duration delay;
+
+  @override
+  String get name => moduleName;
+
+  @override
+  Future<void> registerDependencies(ModularBridge bridge) =>
+      Future<void>.delayed(delay);
+
+  @override
+  void init(ModularBridge bridge) {
+    log.add(moduleName);
+  }
+}
+
+class _TimedChildModule extends FeatureModule {
+  _TimedChildModule({required this.log});
+
+  final List<String> log;
+
+  @override
+  String get name => 'Child';
+
+  @override
+  List<Type> get dependencies => [_TimedModule];
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+
+  @override
+  void init(ModularBridge bridge) {
+    log.add('Child');
+  }
+}
+
+class _TimedSoloModule extends FeatureModule {
+  _TimedSoloModule(this.moduleName,
+      {required this.log, this.delay = Duration.zero});
+
+  final String moduleName;
+  final List<String> log;
+  final Duration delay;
+
+  @override
+  String get name => moduleName;
+
+  @override
+  Future<void> registerDependencies(ModularBridge bridge) =>
+      Future<void>.delayed(delay);
+
+  @override
+  void init(ModularBridge bridge) {
+    log.add(moduleName);
+  }
+}
+
+class _PassthroughSubModule extends FeatureModule {
+  int received = 0;
+
+  @override
+  String get name => 'PassthroughSub';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+
+  @override
+  void init(ModularBridge bridge) {
+    subscribe<UserLoggedOutEvent>(
+      bridge,
+      (_) => received++,
+      onError: (_) {},
+      onDone: () {},
+      cancelOnError: false,
+    );
   }
 }

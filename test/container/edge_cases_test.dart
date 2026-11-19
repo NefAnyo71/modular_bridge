@@ -61,6 +61,33 @@ void main() {
       expect(bridge.activeScopeNames, hasLength(1));
     });
 
+    test('disposing a stacked scope directly removes it from the stack',
+        () async {
+      final scope = bridge.pushNewScope(scopeName: 'req');
+      scope.registerSingleton<String>('scoped');
+
+      await scope.dispose();
+
+      expect(bridge.currentScope, isNull);
+      expect(bridge.activeScopeNames, isEmpty);
+      expect(bridge.isRegistered<String>(), isFalse);
+      // The bridge still resolves normally afterwards — no lock-up.
+      bridge.registerSingleton<int>(1);
+      expect(bridge.get<int>(), 1);
+    });
+
+    test('disposing a stacked scope disposes its child scopes too', () async {
+      bridge.pushNewScope(scopeName: 'a');
+      final mid = bridge.pushNewScope(scopeName: 'b');
+      final top = bridge.pushNewScope(scopeName: 'c');
+
+      await mid.dispose();
+
+      expect(top.isDisposed, isTrue);
+      expect(bridge.activeScopeNames, ['a']);
+      expect(bridge.currentScopeName, 'a');
+    });
+
     test('signalReady through a scope reaches root registrations', () {
       final service = _ReadyService();
       bridge.registerSingleton<_ReadyService>(
@@ -157,6 +184,23 @@ void main() {
       expect(root.shadowNotifications, 1);
 
       await scope.dispose();
+    });
+
+    test('onLeaveShadow fires for transient factory shadowing instances',
+        () async {
+      final root = _ShadowableService();
+      bridge.registerSingleton<_ShadowableService>(root);
+
+      final scope = bridge.createScope();
+      // Factory lifecycles never populate cachedInstance — the shadowing
+      // instance must be remembered from notify time for onLeaveShadow.
+      scope.registerFactory<_ShadowableService>(() => _ShadowableService());
+
+      scope.get<_ShadowableService>();
+      expect(root.shadowedBy, isNotNull);
+
+      await scope.dispose();
+      expect(root.leftShadow, isNotNull);
     });
   });
 

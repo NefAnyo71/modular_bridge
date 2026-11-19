@@ -1,5 +1,31 @@
-## Unreleased
+> **Release note:** `0.11.0` was published a bit earlier than planned — we were
+> testing the release flow for an upcoming feature, forgot it was armed, and
+> it went live. No harm done: the release is complete, documented, and fully
+> tested (285 tests). This entry and `0.12.0` below are the intended content.
 
+## 0.12.0
+
+* **Fix — stacked scope lock-up**: disposing a `BridgeScope` that sits on the active scope stack (without `popScope`/`dropScope`) now removes it from the stack via `unstackScope`, so `currentScope` can no longer return a disposed scope and lock every subsequent resolution. Child scopes are still disposed with their parent.
+* **Fix — `BridgeScope.isReady`**: now waits for `pendingResult` orchestrations (`registerSingletonWithDependencies`/`Async`) exactly like `ModularBridge.isReady` — previously it reported ready while the dependency was still being built.
+* **Fix — unhandled async errors**: the `pendingResult` cleanup chain in `registerSingletonWithDependencies`/`Async` (root and scope) no longer produces unhandled async errors when the orchestration fails; the error still surfaces through `allReady`/`isReady`.
+* **Fix — `ShadowChangeHandlers` symmetry**: the shadowing instance is captured at `onGetShadowed` time, so `onLeaveShadow` now fires for transient/async factories too (previously skipped because `cachedInstance` is always `null` for them).
+* **Fix — sync interceptor edge case**: `get<Future<T>>`-style resolutions where the resolved value itself is a `Future` no longer throw `BridgeAsyncInterceptorException` when resolution interceptors are registered.
+* **Fix — disposed modules**: `registerModule` now throws a `StateError` when handed an already-disposed `FeatureModule` instead of running its lifecycle hooks on a dead instance.
+* **`overrideAsync` / `overrideFactory`**: test helpers on `ModularBridge` and `BridgeScope` — one-line async-singleton and transient-factory overrides, mirroring `override(instance)`.
+* **`unregister` returns `Future<bool>`**: `ModularBridge.unregister` and `BridgeScope.unregister` now report whether a registration was actually removed (`false` instead of silently ignoring misses; `throwOnMissing` still throws).
+* **`ModuleHealthResult.duration`**: `checkModuleHealth` measures per-module health-check wall time.
+* **`registerModules(parallel: true)`**: modules at the same dependency depth initialize concurrently while topological order is preserved; each module keeps its own owner zone so dependency attribution stays correct.
+* **`FeatureModule.subscribe` options**: `onError`, `onDone`, and `cancelOnError` are forwarded to the underlying event-bus subscription.
+* **`BridgeConfig.removeRuntimeOverrides()`**: clears every runtime override set via `set`/`setAll`/`switchEnvironment(runtimeOverrides:)` and restores common/environment values in one call.
+
+## 0.11.0
+
+* **Unique scope names**: creating a `BridgeScope` (via `createScope`, `pushNewScope`, `pushNewScopeAsync`, or `createChildScope`) with a `scopeName` that is already used by another live scope now throws a `StateError` — `dropScope`/`popScopesTill`/`findScope` can no longer resolve ambiguously. The name is freed when the scope is disposed or popped; anonymous scopes are unaffected.
+* **Ambiguous module batches rejected**: `registerModules` still allows multiple instances of the same `FeatureModule` type in one batch (distinct `name`s), but a type-based `FeatureModule.dependencies` entry matching more than one batched instance now throws a `StateError` instead of silently binding to an arbitrary instance.
+* **DevTools retargeting**: `enableDevTools()` extensions are process-wide and now always report on the most recently enabled bridge, so a fresh container (e.g. per-test isolated bridge) takes over the `ext.modular_bridge.*` snapshot instead of the first bridge ever registered. The state payload now includes `isDisposed`.
+* **Config change detection**: `BridgeConfig.set`/`setAll` compare `Map`/`List` values structurally, so re-setting an equal collection no longer fires `onChanged` or resets config-bound dependencies.
+* **Replacement disposal hardening**: `override`/re-registration disposal is documented as asynchronous (may overlap the replacement's first resolution) and disposal errors are now routed through `bridgeErrorReporter` instead of surfacing as unhandled async errors.
+* **Docs**: `publish` on a disposed `BridgeEventBus` is documented as a deliberate safe no-op (unlike `subscribe`, which throws) so teardown code can publish unconditionally.
 * **Resolution interceptors**: `bridge.addResolutionInterceptor` registers onion-style middleware around every public resolution (`get`, `getAsync`, `getParam`, `getParamAsync`), including scope fallthrough. Interceptors receive a `BridgeResolutionRequest` (type, instance name, arguments, async flag) and a `next` closure — they can observe, wrap, substitute, or short-circuit resolutions. Returning a `Future` on the synchronous path throws `BridgeAsyncInterceptorException`. Zero-overhead fast path when no interceptors are registered; cleared on `dispose`.
 * **`BridgeInterceptors` helpers**: ready-made interceptor factories — `BridgeInterceptors.logging()` (per-resolution log via `dart:developer.log` or a custom sink) and `BridgeInterceptors.timing()` (structured `BridgeResolutionTiming` callbacks for metrics aggregation).
 * **Performance**: cached singleton resolutions (`singleton`/`lazySingleton`/resolved `asyncSingleton` with no `dependsOn`) now skip resolution-frame zone allocation entirely — benchmark: ~+22% sync `get`, ~+90% scope-fallback and async `getAsync` throughput.

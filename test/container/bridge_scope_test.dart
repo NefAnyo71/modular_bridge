@@ -335,5 +335,86 @@ void main() {
         expect(disposed, isTrue);
       });
     });
+
+    test('scope unregister returns whether a registration was removed',
+        () async {
+      final scope = bridge.createScope();
+      scope.registerSingleton<int>(1);
+
+      expect(await scope.unregister<int>(), isTrue);
+      expect(scope.isRegistered<int>(), isFalse);
+      expect(await scope.unregister<int>(), isFalse);
+    });
+
+    test('scope isReady waits for pending with-dependencies orchestration',
+        () async {
+      final gate = Completer<AsyncConfig>();
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () => gate.future,
+        instanceName: 'cfg',
+      );
+
+      final scope = bridge.createScope();
+      scope.registerSingletonWithDependencies<String>(
+        factoryFunc: (_) => 'done',
+        dependsOn: [DependencyKey(AsyncConfig, 'cfg')],
+      );
+
+      var ready = false;
+      unawaited(scope.isReady<String>().then((_) => ready = true));
+      await Future<void>.delayed(Duration.zero);
+      expect(ready, isFalse);
+
+      gate.complete(AsyncConfig('v'));
+      await scope.isReady<String>();
+      await Future<void>.delayed(Duration.zero);
+      expect(ready, isTrue);
+    });
+
+    group('scope name uniqueness', () {
+      test('duplicate live scope names throw StateError', () {
+        bridge.pushNewScope(scopeName: 'request');
+
+        expect(
+          () => bridge.pushNewScope(scopeName: 'request'),
+          throwsStateError,
+        );
+        expect(
+          () => bridge.createScope(scopeName: 'request'),
+          throwsStateError,
+        );
+        // The rejected names leave no live scope behind.
+        expect(bridge.activeScopeNames, ['request']);
+      });
+
+      test('a child scope cannot reuse an ancestor name', () {
+        final parent = bridge.pushNewScope(scopeName: 'session');
+
+        expect(
+          () => parent.createChildScope(scopeName: 'session'),
+          throwsStateError,
+        );
+      });
+
+      test('the name is freed once the scope is popped or disposed', () async {
+        bridge.pushNewScope(scopeName: 'request');
+        await bridge.popScope();
+
+        bridge.pushNewScope(scopeName: 'request');
+        await bridge.popScope();
+
+        final scope = bridge.createScope(scopeName: 'request');
+        await scope.dispose();
+        expect(() => bridge.createScope(scopeName: 'request'), returnsNormally);
+      });
+
+      test('unnamed scopes may coexist freely', () {
+        bridge.pushNewScope();
+        bridge.pushNewScope();
+        bridge.createScope();
+
+        expect(bridge.activeScopeNames, hasLength(2));
+      });
+    });
   });
 }

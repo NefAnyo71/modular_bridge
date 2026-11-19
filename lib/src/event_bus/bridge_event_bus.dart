@@ -109,6 +109,11 @@ class BridgeEventBus {
   /// The event first passes through the registered [BridgeEventInterceptor]
   /// chain, which may transform, duplicate, or veto it. Only events that
   /// reach the end of the chain are counted and delivered.
+  ///
+  /// Publishing to a disposed bus is a deliberate safe no-op (with a debug
+  /// log) rather than an error — unlike [subscribe], which throws
+  /// [StateError]. This asymmetry lets teardown code publish final events
+  /// unconditionally without guarding every call site.
   void publish<T extends BridgeEvent>(T event) {
     if (_isDisposed) {
       if (kDebugMode) {

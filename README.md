@@ -97,7 +97,7 @@ Add both to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_bridge: ^0.10.1
+  modular_bridge: ^0.12.0
   modular_bridge_flutter: ^0.1.0   # Flutter apps only
 ```
 
@@ -583,7 +583,9 @@ await bridge.popScope(); // disposes scope-local dependencies
 
 Additional stack controls: `pushNewScopeAsync`, `popScope`, `dropScope(name)`, `popScopesTill(name)`, `currentScope`, `currentScopeName`, `activeScopeNames`, `onScopeChanged`, and `resetScope()`.
 
-Instances implementing `Disposable` (`FutureOr<void> onDispose()`) are disposed automatically when no explicit `onDispose` hook was registered. `bridge.allowReassignment = true` globally permits re-registration without `override: true`.
+Scope names must be **unique across all live scopes** on the same bridge — creating a scope whose name is already taken throws a `StateError`. The name is freed when the scope is disposed or popped, and anonymous scopes (`scopeName: null`) may always coexist.
+
+Instances implementing `Disposable` (`FutureOr<void> onDispose()`) are disposed automatically when no explicit `onDispose` hook was registered. `bridge.allowReassignment = true` globally permits re-registration without `override: true`; note that a replaced registration's disposal runs asynchronously and may overlap the replacement's first resolution — call `unregister` first when ordered teardown matters.
 
 #### Startup Orchestration (`signalsReady` / `dependsOn`)
 
@@ -646,7 +648,7 @@ if (graph.hasCycles) {
 }
 ```
 
-`registerModules` now initializes modules in dependency order (topological sort) and rejects cyclic module graphs.
+`registerModules` now initializes modules in dependency order (topological sort) and rejects cyclic module graphs. Multiple instances of the same module type may share a batch (they register under distinct `name`s), but a type-based `dependencies` entry that matches more than one batched instance throws a `StateError` — register the duplicates separately in that case.
 
 #### Environment-Aware Modules
 
@@ -664,7 +666,7 @@ final class DebugModule extends FeatureModule {
 
 #### Inspector Hooks
 
-`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them. `ModularBridgeInspector` stays read-only by default; pass `onUnregisterDependency`/`onResetLazySingletons` callbacks to enable action buttons.
+`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection — the extensions are process-wide and always report on the most recently enabled bridge, so calling it on a fresh container retargets the snapshot. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them. `ModularBridgeInspector` stays read-only by default; pass `onUnregisterDependency`/`onResetLazySingletons` callbacks to enable action buttons.
 
 Migrating from `get_it`? See [MIGRATION.md](MIGRATION.md) for a full cheat sheet. Run `flutter test benchmark/` for resolution throughput numbers (roughly ~1M sync `get` ops/s and ~1.5M scope-fallback ops/s on a dev machine).
 
@@ -1069,7 +1071,7 @@ try {
 | `bridge.registerSingleton<T>(instance)` | Registers an eager singleton instance |
 | `bridge.registerLazySingleton<T>(() => T())` | Registers a lazy singleton instantiated on first resolution and cached |
 | `bridge.registerFactory<T>(() => T())` | Registers a factory producing a fresh instance on every call |
-| `bridge.override<T>(mock)` | Replaces an existing dependency with a mock instance in one line |
+| `bridge.override<T>(mock)` / `overrideAsync` / `overrideFactory` | Replaces a dependency with a mock instance / async factory / transient factory in one line |
 | `bridge.get<T>()` or `bridge<T>()` | Resolves the dependency of type `T` (or throws `BridgeDependencyException`) |
 | `bridge.tryGet<T>()` | Returns `null` only when `T` is not registered; dependency creation errors propagate |
 | `bridge.registerAsyncSingleton<T>(factory, {eager, retryPolicy})` | Registers an async singleton resolved via `getAsync<T>()`; `eager: true` starts resolution immediately and `retryPolicy` retries transient failures |
@@ -1097,14 +1099,14 @@ try {
 | `bridge.signalReady(instance)` | Manually completes a `signalsReady` / `WillSignalReady` registration |
 | `bridge.registerSingletonWithDependencies<T>` / `...Async` | Registers a singleton gated on `dependsOn` keys (sync or `FutureOr` factory) |
 | `dep<T>([name])` / `DependencyKey.of<T>([name])` | Shorthand aliases for building `dependsOn` keys |
-| `FeatureModule.healthCheck(bridge)` / `bridge.checkModuleHealth()` | Per-module health verification returning `ModuleHealthResult`s |
+| `FeatureModule.healthCheck(bridge)` / `bridge.checkModuleHealth()` | Per-module health verification returning `ModuleHealthResult`s (with per-module `duration`) |
 | `BridgeConfig.fromAsset(path, loader:)` / `fromString` / `fromJson` | Loads configuration from JSON (loader-injected; `loadBridgeConfigFromAsset` wraps `rootBundle` in Flutter) |
 | `BridgeConfig.fromEnvString` / `fromEnvFile(path, loader:)` | Loads configuration from dotenv content/files; env auto-detected via `BRIDGE_ENV`/`APP_ENV`/`ENVIRONMENT` |
 | `ModularBridgeInspector` (`modular_bridge_flutter`) | Read-only DevTools-style widget: registrations, modules, metrics, health check, event feed |
 | `bridge.createScope()` / `createScopeAsync(init)` | Creates a `BridgeScope` (optionally with async sealed setup) |
 | `bridge.pushNewScope` / `popScope` / `dropScope` / `popScopesTill` | Implicit scope stack |
 | `bridge.isScopeActive(name)` / `findScope(name)` | Scope stack membership / live-scope lookup |
-| `bridge.registerModule(m, checkHealth: true)` / `registerModules(ms, checkHealth: true)` | Auto-runs `healthCheck` after registration; failures reported via `bridgeErrorReporter` |
+| `bridge.registerModule(m, checkHealth: true)` / `registerModules(ms, checkHealth: true, parallel: true)` | Auto-runs `healthCheck` after registration; failures reported via `bridgeErrorReporter`; `parallel` initializes same-depth modules concurrently |
 | `bridgeErrorReporter` / `reportBridgeError` | Pluggable sink for framework-internal errors (default: `dart:developer.log`) |
 | `bridge.currentScope` / `activeScopeNames` / `onScopeChanged` | Scope stack introspection and change callback |
 | `bridge.resetScope()` / `resetLazySingleton(s)` | Clears current-scope registrations / resets lazy singletons |
@@ -1113,7 +1115,7 @@ try {
 | `bridge.diagnosticsReport()` | Structured registrations/scopes/modules/pending-async snapshot |
 | `scope.createChildScope()` | Creates a nested scope resolving child → parent → bridge |
 | `scope.registerAsyncSingleton` / `registerFactoryAsync` | Full async lifecycle support inside scopes |
-| `bridge.unregister<T>()` | Async-safe unregister that awaits disposal hooks |
+| `bridge.unregister<T>()` | Async-safe unregister awaiting disposal hooks; completes `true`/`false` for hit/miss |
 | `bridge.dispose()` | Permanently disposes the container (use `reset()` to keep it usable) |
 | `bridge.onLatest<E>()` | Event stream replaying the latest `E` to each new listener |
 | `bridge.once<E>({timeout})` | Completes with the next `E` event or throws `TimeoutException`/`StateError` on dispose |
@@ -1122,11 +1124,11 @@ try {
 | `bridge.onModulesReady(cb)` | Callback fired whenever all modules finish registering |
 | `bridge.moduleDependents(type)` | Lists modules that declare `type` as a dependency |
 | `bridge.registeredDependencies` | Snapshot of all registered `DependencyKey`s |
-| `config.onChanged` / `config.remove(key)` | Reactive config stream / remove a runtime override |
+| `config.onChanged` / `config.remove(key)` / `config.removeRuntimeOverrides()` | Reactive config stream / remove one or all runtime overrides |
 | `config.getMap(key)` / `getSection<T>(key, decoder)` | Read nested config maps as typed objects |
 | `bridge.publish<E>(event)` | Broadcasts a strongly-typed domain event to all active listeners |
 | `bridge.on<E>()` | Subscribes to an event stream of type `E` |
-| `module.subscribe<E>(bridge, onData)` | Scoped subscription **automatically cancelled** when the module is disposed |
+| `module.subscribe<E>(bridge, onData, {onError, onDone, cancelOnError})` | Scoped subscription **automatically cancelled** when the module is disposed |
 | `config.switchEnvironment(env)` | Performs a runtime hot-switch across `dev`, `staging`, and `prod` |
 | `bridge.configValue<T>(key)` | Resolves config through the active scope chain with scope overrides |
 | `scope.setConfigValue` / `removeConfigValue` / `hasConfigOverride` / `configOverrides` / `configValue` | Per-scope configuration overrides that inherit to child scopes |

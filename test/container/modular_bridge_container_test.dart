@@ -28,6 +28,43 @@ void main() {
       expect(identical(bridge<UserRepository>(), repo), isTrue);
     });
 
+    test('unregister returns true when a registration was removed', () async {
+      bridge.registerSingleton<String>('x');
+
+      expect(await bridge.unregister<String>(), isTrue);
+      expect(bridge.isRegistered<String>(), isFalse);
+      expect(await bridge.unregister<String>(), isFalse);
+      await expectLater(
+        bridge.unregister<String>(throwOnMissing: true),
+        throwsA(isA<BridgeDependencyNotFoundException>()),
+      );
+    });
+
+    test('overrideAsync and overrideFactory replace registrations', () async {
+      bridge.registerSingleton<String>('real');
+      bridge.overrideFactory<String>(() => 'fake');
+      expect(bridge.get<String>(), 'fake');
+
+      bridge.registerAsyncSingleton<int>(() async => 1, instanceName: 'n');
+      bridge.overrideAsync<int>(() async => 2, instanceName: 'n');
+      expect(await bridge.getAsync<int>(instanceName: 'n'), 2);
+    });
+
+    test('failed with-dependencies resolution surfaces via allReady', () async {
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () => Future<AsyncConfig>.error(StateError('boom')),
+        instanceName: 'bad',
+      );
+      bridge.registerSingletonWithDependencies<String>(
+        factoryFunc: (_) => 'x',
+        dependsOn: [DependencyKey(AsyncConfig, 'bad')],
+      );
+
+      // The orchestration error must surface through allReady — and must
+      // not leak as an unhandled async error from the cleanup chain.
+      await expectLater(bridge.allReady(), throwsA(anything));
+    });
+
     test('registers and resolves lazy singleton on demand', () {
       var factoryCalls = 0;
       bridge.registerLazySingleton<UserRepository>(() {

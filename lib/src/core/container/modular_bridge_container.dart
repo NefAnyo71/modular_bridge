@@ -88,7 +88,9 @@ class ModularBridge {
   ///
   /// While a scope is on [scopeStack], registrations made through this bridge
   /// are stored in the top scope and resolutions check the scope chain before
-  /// falling back to the root registry.
+  /// falling back to the root registry. When [scopeName] is non-null it must
+  /// be unique across all live scopes on this bridge, otherwise a
+  /// [StateError] is thrown.
   ///
   /// [init] runs synchronously after the scope is pushed; [dispose] runs when
   /// the scope is popped or dropped. Set [isFinal] to seal the scope against
@@ -514,6 +516,38 @@ class ModularBridge {
     _liveScopes.add(scope);
   }
 
+  /// Throws a [StateError] when another live scope already uses [scopeName].
+  ///
+  /// Scope names must be unique across the scope stack and every tracked
+  /// scope so [dropScope], [popScopesTill], and [findScope] resolve
+  /// unambiguously. Called by the [BridgeScope] constructor; not part of
+  /// the public API contract. `null` (anonymous) names are always allowed.
+  void checkScopeNameAvailable(String? scopeName) {
+    if (scopeName == null) return;
+    for (final scope in _liveScopes) {
+      if (!scope.isDisposed && scope.scopeName == scopeName) {
+        throw StateError(
+          'A BridgeScope named \'$scopeName\' is already active. Dispose or '
+          'pop the existing scope first, or leave scopeName null for '
+          'anonymous scopes.',
+        );
+      }
+    }
+  }
+
+  /// Removes [scope] from the active scope stack when present and notifies
+  /// [onScopeChanged] listeners.
+  ///
+  /// Called by [BridgeScope.dispose] so that disposing a stacked scope
+  /// directly (without [popScope]/[dropScope]) cannot leave a disposed scope
+  /// on top of the stack and lock every subsequent resolution. Not part of
+  /// the public API contract.
+  void unstackScope(BridgeScope scope) {
+    if (_scopeStack.remove(scope)) {
+      _notifyScopeChanged(false);
+    }
+  }
+
   /// Removes a scope from live tracking after disposal.
   ///
   /// Called by [BridgeScope]; not part of the public API contract.
@@ -562,10 +596,14 @@ class ModularBridge {
   ) {
     final interceptors = _resolutionInterceptors;
     if (interceptors.isEmpty) return inner();
+    // When T itself is a Future type (e.g. get<Future<Foo>> on a sync
+    // factory), a Future is a legitimate resolved value, not an interceptor
+    // accidentally going async — only reject Futures for non-Future T.
+    final allowFutureValues = <T>[] is List<Future<Object?>>;
     Object? run(int index) {
       if (index == interceptors.length) return inner();
       final result = interceptors[index](request, () => run(index + 1));
-      if (result is Future<Object?>) {
+      if (!allowFutureValues && result is Future<Object?>) {
         throw BridgeAsyncInterceptorException(request.type);
       }
       return result;
@@ -615,7 +653,18 @@ class ModularBridge {
         throw BridgeDependencyAlreadyRegisteredException(T,
             instanceName: key.name);
       }
-      unawaited(existing.dispose());
+      // Replacement disposal is intentionally fire-and-forget: registration
+      // APIs are synchronous, so the previous instance's onDispose hook may
+      // still be running while the new factory executes. Use unregister()
+      // when ordered teardown matters. Errors are reported, never thrown.
+      unawaited(
+          existing.dispose().catchError((Object error, StackTrace stackTrace) {
+        reportBridgeError(
+          error,
+          stackTrace,
+          context: 'While disposing replaced dependency ${key.toString()}',
+        );
+      }));
     }
 
     final descriptor = DependencyDescriptor<T>(
@@ -794,7 +843,11 @@ class ModularBridge {
     final descriptor = _registry[key];
     final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
     descriptor?.pendingResult = pending;
-    unawaited(pending.whenComplete(() {
+    // Observe completion for cleanup without re-throwing: resolution errors
+    // already surface through descriptor.pendingResult (allReady/isReady).
+    // A bare `pending.whenComplete(...)` future would otherwise complete
+    // with the same error and become an unhandled async error.
+    unawaited(pending.then<void>((_) {}, onError: (_, __) {}).whenComplete(() {
       if (identical(descriptor?.pendingResult, pending)) {
         descriptor?.pendingResult = null;
       }
@@ -843,7 +896,11 @@ class ModularBridge {
     final descriptor = _registry[key];
     final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
     descriptor?.pendingResult = pending;
-    unawaited(pending.whenComplete(() {
+    // Observe completion for cleanup without re-throwing: resolution errors
+    // already surface through descriptor.pendingResult (allReady/isReady).
+    // A bare `pending.whenComplete(...)` future would otherwise complete
+    // with the same error and become an unhandled async error.
+    unawaited(pending.then<void>((_) {}, onError: (_, __) {}).whenComplete(() {
       if (identical(descriptor?.pendingResult, pending)) {
         descriptor?.pendingResult = null;
       }
@@ -1292,12 +1349,44 @@ class ModularBridge {
   /// Replaces an existing dependency with a mock or test instance in a single line.
   ///
   /// If the dependency has not been registered before, it will be added as a singleton.
+  ///
+  /// The replaced registration's disposal runs asynchronously and may overlap
+  /// with the first resolution of the new instance; call [unregister] first
+  /// when ordered teardown matters.
   void override<T extends Object>(
     T instance, {
     String? instanceName,
   }) {
     registerSingleton<T>(
       instance,
+      instanceName: instanceName,
+      override: true,
+    );
+  }
+
+  /// Test helper: replaces [T] with an async singleton resolved lazily on
+  /// the first [getAsync] call. Convenience wrapper around
+  /// [registerAsyncSingleton] with `override: true`.
+  void overrideAsync<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+  }) {
+    registerAsyncSingleton<T>(
+      factory,
+      instanceName: instanceName,
+      override: true,
+    );
+  }
+
+  /// Test helper: replaces [T] with a transient factory producing a new
+  /// instance per resolution. Convenience wrapper around
+  /// [registerFactory] with `override: true`.
+  void overrideFactory<T extends Object>(
+    T Function() factory, {
+    String? instanceName,
+  }) {
+    registerFactory<T>(
+      factory,
       instanceName: instanceName,
       override: true,
     );
@@ -1855,10 +1944,11 @@ class ModularBridge {
   /// Unregisters and disposes the dependency of type [T].
   ///
   /// Operates on the active scope when one is pushed. Returns a [Future]
-  /// that completes when asynchronous disposal hooks have finished. Missing
-  /// registrations are silently ignored; pass `throwOnMissing: true` to get a
-  /// [BridgeDependencyNotFoundException].
-  Future<void> unregister<T extends Object>({
+  /// that completes with `true` when a registration was removed, `false`
+  /// when nothing matched — pass `throwOnMissing: true` to get a
+  /// [BridgeDependencyNotFoundException] instead of `false`.
+  /// Asynchronous disposal hooks are awaited before the future completes.
+  Future<bool> unregister<T extends Object>({
     String? instanceName,
     bool throwOnMissing = false,
   }) async {
@@ -1870,7 +1960,7 @@ class ModularBridge {
           throw BridgeDependencyNotFoundException(T,
               instanceName: instanceName);
         }
-        return;
+        return false;
       }
       // Remove the registration from whichever scope owns it; registrations
       // that only exist on the root registry fall through to root removal.
@@ -1878,21 +1968,20 @@ class ModularBridge {
       var current = scope;
       while (true) {
         if (current.hasLocal(key)) {
-          await current.unregister<T>(instanceName: instanceName);
-          return;
+          return current.unregister<T>(instanceName: instanceName);
         }
         final parent = current.parentScope;
         if (parent == null) break;
         current = parent;
       }
     }
-    await _unregisterRootDependency<T>(
+    return _unregisterRootDependency<T>(
       instanceName: instanceName,
       throwOnMissing: throwOnMissing,
     );
   }
 
-  Future<void> _unregisterRootDependency<T extends Object>({
+  Future<bool> _unregisterRootDependency<T extends Object>({
     String? instanceName,
     required bool throwOnMissing,
   }) async {
@@ -1902,10 +1991,11 @@ class ModularBridge {
       if (throwOnMissing) {
         throw BridgeDependencyNotFoundException(T, instanceName: instanceName);
       }
-      return;
+      return false;
     }
     notifyDependencyEvent(DependencyChangeKind.unregistered, descriptor);
     await descriptor.dispose();
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -1932,6 +2022,13 @@ class ModularBridge {
   }) async {
     _ensureActive();
     final moduleName = module.name;
+    if (module.isDisposed) {
+      throw StateError(
+        'Cannot register disposed FeatureModule ($moduleName). '
+        'Module instances are single-use — instantiate a new module to '
+        're-register.',
+      );
+    }
     if (_modules.containsKey(moduleName)) {
       throw BridgeModuleAlreadyRegisteredException(moduleName);
     }
@@ -2109,20 +2206,84 @@ class ModularBridge {
   /// When [checkHealth] is true, each module's [FeatureModule.healthCheck]
   /// runs right after its successful registration; results are reported via
   /// [reportBridgeError] without failing the batch. See [registerModule].
+  ///
+  /// When [parallel] is true, modules at the same dependency depth are
+  /// initialized concurrently — dependency order is still guaranteed
+  /// (a module never starts before every batched module it depends on has
+  /// finished registering), but independent modules no longer wait for each
+  /// other. Each module still gets its own async-local owner zone, so
+  /// dependency attribution stays correct under concurrency.
   Future<void> registerModules(
     List<FeatureModule> modules, {
     bool checkHealth = false,
+    bool parallel = false,
   }) async {
     _ensureActive();
     _registrationDepth++;
     try {
-      for (final module in _topologicalSortModules(modules)) {
-        await registerModule(module, checkHealth: checkHealth);
+      final sorted = _topologicalSortModules(modules);
+      if (!parallel) {
+        for (final module in sorted) {
+          await registerModule(module, checkHealth: checkHealth);
+        }
+      } else {
+        final depths = _moduleDepths(sorted, modules);
+        final levels = <int, List<FeatureModule>>{};
+        for (final module in sorted) {
+          levels.putIfAbsent(depths[module]!, () => []).add(module);
+        }
+        final levelKeys = levels.keys.toList()..sort();
+        for (final level in levelKeys) {
+          await Future.wait(levels[level]!
+              .map((m) => registerModule(m, checkHealth: checkHealth)));
+        }
       }
     } finally {
       _registrationDepth--;
     }
     _notifyModulesReadyIfNeeded();
+  }
+
+  /// Computes each module's dependency depth within [modules]: `0` when it
+  /// has no batched prerequisites, otherwise `1 + max(depth of batched
+  /// dependencies)`. Used by [registerModules] `parallel: true` to schedule
+  /// concurrency levels. Safe to recurse because the topological sort has
+  /// already rejected cyclic batches.
+  Map<FeatureModule, int> _moduleDepths(
+    List<FeatureModule> sorted,
+    List<FeatureModule> modules,
+  ) {
+    // Only unambiguous type→module mappings participate; duplicated types
+    // were either rejected by the sort (when depended upon) or are simply
+    // never referenced through `dependencies`.
+    final byType = <Type, FeatureModule>{};
+    final ambiguous = <Type>{};
+    for (final module in modules) {
+      final existing = byType[module.runtimeType];
+      if (existing != null && !identical(existing, module)) {
+        ambiguous.add(module.runtimeType);
+      } else {
+        byType[module.runtimeType] = module;
+      }
+    }
+    for (final type in ambiguous) {
+      byType.remove(type);
+    }
+
+    final cache = <FeatureModule, int>{};
+    int depthOf(FeatureModule module) => cache.putIfAbsent(module, () {
+          var depth = 0;
+          for (final depType in module.dependencies) {
+            final dep = byType[depType];
+            if (dep != null) {
+              final candidate = depthOf(dep) + 1;
+              if (candidate > depth) depth = candidate;
+            }
+          }
+          return depth;
+        });
+
+    return {for (final module in sorted) module: depthOf(module)};
   }
 
   /// Orders [modules] so that every module is initialized after the modules
@@ -2133,9 +2294,15 @@ class ModularBridge {
   /// (they must already be registered). Throws a [StateError] when the batch
   /// contains a dependency cycle.
   List<FeatureModule> _topologicalSortModules(List<FeatureModule> modules) {
-    final byType = <Type, FeatureModule>{};
+    // Multiple instances of the same module type are allowed (they register
+    // under distinct names), but a type-based `dependencies` entry cannot
+    // disambiguate between them — that case throws below.
+    final byType = <Type, List<FeatureModule>>{};
     for (final module in modules) {
-      byType[module.runtimeType] = module;
+      final candidates = byType.putIfAbsent(module.runtimeType, () => []);
+      if (!candidates.any((m) => identical(m, module))) {
+        candidates.add(module);
+      }
     }
 
     final sorted = <FeatureModule>[];
@@ -2150,8 +2317,18 @@ class ModularBridge {
       }
       state[module] = 1;
       for (final depType in module.dependencies) {
-        final dep = byType[depType];
-        if (dep != null) visit(dep);
+        final candidates = byType[depType];
+        if (candidates == null) continue;
+        if (candidates.length > 1) {
+          throw StateError(
+            'Module ${module.name} depends on $depType, but the batch '
+            'contains ${candidates.length} instances of that type and '
+            '[FeatureModule.dependencies] cannot disambiguate between '
+            'them. Register the duplicates separately or give them '
+            'distinct types.',
+          );
+        }
+        visit(candidates.single);
       }
       state[module] = 2;
       sorted.add(module);
@@ -2176,17 +2353,20 @@ class ModularBridge {
     _ensureActive();
     final results = <ModuleHealthResult>[];
     for (final module in _modules.values) {
+      final sw = Stopwatch()..start();
       try {
         final healthy = await module.healthCheck(this);
         results.add(ModuleHealthResult(
           moduleName: module.name,
           isHealthy: healthy,
+          duration: sw.elapsed,
         ));
       } catch (error) {
         results.add(ModuleHealthResult(
           moduleName: module.name,
           isHealthy: false,
           error: error,
+          duration: sw.elapsed,
         ));
       }
     }
@@ -2347,7 +2527,12 @@ class ModularBridge {
   // DEVTOOLS SERVICE EXTENSION
   // ---------------------------------------------------------------------------
 
+  static ModularBridge? _devToolsBridge;
   static bool _devToolsRegistered = false;
+
+  /// The bridge the DevTools extensions currently report on: the most recent
+  /// one to call [enableDevTools].
+  ModularBridge get _devToolsTarget => _devToolsBridge ?? this;
 
   /// Registers VM service extensions for live container inspection.
   ///
@@ -2357,25 +2542,28 @@ class ModularBridge {
   /// - `ext.modular_bridge.graph` — Graphviz DOT of the `dependsOn` graph.
   /// - `ext.modular_bridge.metrics` — resolution metrics snapshot.
   ///
-  /// Registration is process-wide: the first bridge to call this method owns
-  /// the extensions. No-op on platforms without VM service support.
+  /// Registration is process-wide: extensions are registered once and always
+  /// report on the **most recently enabled** bridge, so calling this on a new
+  /// container (e.g. a fresh test bridge) retargets the snapshot without
+  /// re-registration. No-op on platforms without VM service support.
   void enableDevTools() {
+    _devToolsBridge = this;
     if (_devToolsRegistered) return;
     try {
       developer.registerExtension(
         'ext.modular_bridge.state',
         (method, params) async => developer.ServiceExtensionResponse.result(
-            jsonEncode(_devToolsState())),
+            jsonEncode(_devToolsTarget._devToolsState())),
       );
       developer.registerExtension(
         'ext.modular_bridge.graph',
         (method, params) async => developer.ServiceExtensionResponse.result(
-            jsonEncode({'dot': dependencyGraph().toDot()})),
+            jsonEncode({'dot': _devToolsTarget.dependencyGraph().toDot()})),
       );
       developer.registerExtension(
         'ext.modular_bridge.metrics',
         (method, params) async => developer.ServiceExtensionResponse.result(
-            jsonEncode(metrics.snapshot())),
+            jsonEncode(_devToolsTarget.metrics.snapshot())),
       );
       _devToolsRegistered = true;
     } catch (error, stackTrace) {
@@ -2390,6 +2578,7 @@ class ModularBridge {
   Map<String, Object?> _devToolsState() {
     final report = diagnosticsReport();
     return {
+      'isDisposed': isDisposed,
       'registrations': [
         for (final info in report.registrations)
           {

@@ -32,6 +32,17 @@ void main() {
       expect(service.login('a@b.c'), 'intercepted_real_token_for_a@b.c');
     });
 
+    test('sync resolution of a Future-typed dependency does not throw',
+        () async {
+      // T = Future<int>: the Future is the resolved value, not an
+      // interceptor accidentally going async.
+      bridge.registerFactory<Future<int>>(() async => 42);
+      bridge.addResolutionInterceptor((request, next) => next());
+
+      final future = bridge.get<Future<int>>();
+      expect(await future, 42);
+    });
+
     test('interceptor can short-circuit without calling next', () {
       bridge.registerSingleton<AuthService>(RealAuthService());
 

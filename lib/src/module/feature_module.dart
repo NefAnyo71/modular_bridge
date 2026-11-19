@@ -61,11 +61,15 @@ abstract class FeatureModule {
   /// Subscribes to events on the [ModularBridge.eventBus] bound to this module's lifetime.
   ///
   /// Any subscription created via this method is automatically canceled when
-  /// [dispose] is called.
+  /// [dispose] is called. [onError], [onDone], and [cancelOnError] are
+  /// forwarded to the underlying stream subscription.
   BridgeSubscription subscribe<T extends BridgeEvent>(
     ModularBridge bridge,
-    void Function(T event) onData,
-  ) {
+    void Function(T event) onData, {
+    void Function(Object error)? onError,
+    void Function()? onDone,
+    bool cancelOnError = false,
+  }) {
     if (_isDisposed) {
       throw StateError(
         'Cannot subscribe on disposed FeatureModule ($name). '
@@ -75,6 +79,9 @@ abstract class FeatureModule {
     final sub = bridge.eventBus.subscribe<T>(
       onData,
       ownerId: name,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
     );
     _internalSubscriptions.add(sub);
     return sub;
@@ -122,6 +129,7 @@ final class ModuleHealthResult {
     required this.moduleName,
     required this.isHealthy,
     this.error,
+    this.duration,
   });
 
   /// The [FeatureModule.name] that was checked.
@@ -133,7 +141,13 @@ final class ModuleHealthResult {
   /// The error thrown by [FeatureModule.healthCheck], if any.
   final Object? error;
 
+  /// Wall-clock time the health check took, when measured by
+  /// [ModularBridge.checkModuleHealth]. `null` for results produced by
+  /// [ModularBridge.registerModule]'s `checkHealth` path.
+  final Duration? duration;
+
   @override
   String toString() => 'ModuleHealthResult($moduleName, isHealthy: $isHealthy'
-      '${error == null ? '' : ', error: $error'})';
+      '${error == null ? '' : ', error: $error'}'
+      '${duration == null ? '' : ', duration: $duration'})';
 }

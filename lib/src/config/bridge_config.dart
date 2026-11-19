@@ -354,11 +354,13 @@ class BridgeConfig {
   /// Sets or updates a single configuration value.
   ///
   /// The value persists across environment switches as a runtime override.
-  /// [onChanged] is only emitted when the effective value actually changes.
+  /// [onChanged] is only emitted when the effective value actually changes;
+  /// [Map]/[List] values are compared structurally so re-setting an equal
+  /// collection does not trigger spurious change notifications.
   void set(String key, dynamic value) {
     _ensureNotDisposed();
-    final changed =
-        !_activeConfig.containsKey(key) || _activeConfig[key] != value;
+    final changed = !_activeConfig.containsKey(key) ||
+        !_configValuesEqual(_activeConfig[key], value);
     _runtimeOverrides[key] = value;
     _activeConfig[key] = value;
     if (changed) {
@@ -369,13 +371,14 @@ class BridgeConfig {
   /// Sets multiple configuration values.
   ///
   /// The values persist across environment switches as runtime overrides.
-  /// [onChanged] is emitted once if at least one effective value changed.
+  /// [onChanged] is emitted once if at least one effective value changed;
+  /// [Map]/[List] values are compared structurally (see [set]).
   void setAll(Map<String, dynamic> values) {
     _ensureNotDisposed();
     var changed = false;
     for (final entry in values.entries) {
       if (!_activeConfig.containsKey(entry.key) ||
-          _activeConfig[entry.key] != entry.value) {
+          !_configValuesEqual(_activeConfig[entry.key], entry.value)) {
         changed = true;
       }
     }
@@ -399,6 +402,21 @@ class BridgeConfig {
       _changeController.add(null);
     }
     return removed;
+  }
+
+  /// Removes **all** runtime overrides set via [set], [setAll], or
+  /// [switchEnvironment]'s `runtimeOverrides`, restoring the underlying
+  /// common and environment-specific values.
+  ///
+  /// [onChanged] is emitted once whenever at least one override was
+  /// removed. Returns `true` when at least one override was removed.
+  bool removeRuntimeOverrides() {
+    _ensureNotDisposed();
+    if (_runtimeOverrides.isEmpty) return false;
+    _runtimeOverrides.clear();
+    _rebuildActiveConfig();
+    _changeController.add(null);
+    return true;
   }
 
   /// Retrieves a strictly typed configuration value for [key].
@@ -529,6 +547,31 @@ class BridgeConfig {
     _envStreamController.close();
     _changeController.close();
   }
+}
+
+/// Structural equality for config values: primitives via `==`, [Map] and
+/// [List] recursively. Used by [BridgeConfig.set]/[BridgeConfig.setAll] so
+/// re-setting an equal collection does not fire [BridgeConfig.onChanged].
+bool _configValuesEqual(dynamic a, dynamic b) {
+  if (identical(a, b)) return true;
+  if (a is Map && b is Map) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      if (!b.containsKey(entry.key) ||
+          !_configValuesEqual(entry.value, b[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (a is List && b is List) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!_configValuesEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  return a == b;
 }
 
 BridgeEnvironment _environmentFromJson(dynamic value) {

@@ -277,6 +277,60 @@ void main() {
       expect(emissions, isEmpty);
     });
 
+    test('set/setAll with structurally equal collections do not emit onChanged',
+        () async {
+      final emissions = <void>[];
+      final sub = config.onChanged.listen((_) => emissions.add(null));
+      addTearDown(sub.cancel);
+
+      config.set('features', {
+        'a': true,
+        'nested': [1, 2]
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(emissions, hasLength(1));
+
+      // Equal-but-not-identical collections must not retrigger listeners.
+      config.set('features', {
+        'a': true,
+        'nested': [1, 2]
+      });
+      config.setAll({
+        'features': {
+          'a': true,
+          'nested': [1, 2]
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(emissions, hasLength(1));
+
+      config.set('features', {
+        'a': false,
+        'nested': [1, 2]
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(emissions, hasLength(2));
+    });
+
+    test('removeRuntimeOverrides restores configured values', () async {
+      final emissions = <void>[];
+      final sub = config.onChanged.listen((_) => emissions.add(null));
+      addTearDown(sub.cancel);
+
+      config.set('appName', 'Overridden');
+      config.set('runtime.only', 'x');
+      expect(config.getString('appName'), 'Overridden');
+
+      expect(config.removeRuntimeOverrides(), isTrue);
+      expect(config.getString('appName'), 'ModularBridgeApp');
+      expect(config.hasKey('runtime.only'), isFalse);
+      expect(config.removeRuntimeOverrides(), isFalse);
+
+      await Future<void>.delayed(Duration.zero);
+      // Two set() calls + one removeRuntimeOverrides().
+      expect(emissions, hasLength(3));
+    });
+
     test('getMap returns unmodifiable nested maps and getSection decodes them',
         () {
       final configWithSection = BridgeConfig(

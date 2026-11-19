@@ -35,6 +35,10 @@ final class BridgeScope {
     this.scopeName,
     this.onDisposeCallback,
   }) : _parent = parent {
+    // Scope names must be unique across every live scope so that
+    // dropScope/popScopesTill/findScope resolve unambiguously. Validate
+    // before mutating the parent/bridge so a rejected name leaves no trace.
+    bridge.checkScopeNameAvailable(scopeName);
     parent?._children.add(this);
     bridge.trackScope(this);
   }
@@ -44,6 +48,10 @@ final class BridgeScope {
 
   /// Optional name used by [ModularBridge.dropScope] and
   /// [ModularBridge.popScopesTill].
+  ///
+  /// Names must be unique across every live scope on the same bridge —
+  /// creating a scope whose name is already taken throws a [StateError].
+  /// The name is freed once the scope is disposed or popped.
   final String? scopeName;
 
   /// Convenience alias for [scopeName].
@@ -56,7 +64,10 @@ final class BridgeScope {
   final List<BridgeScope> _children = [];
   final Map<DependencyKey, DependencyDescriptor<dynamic>> _registry = {};
   final Map<String, dynamic> _configOverrides = {};
-  final Set<DependencyKey> _shadowNotified = {};
+  // key → the shadowing instance that triggered onGetShadowed. Stored at
+  // notify time because transient factories and async factories never populate
+  // cachedInstance, which onLeaveShadow still needs.
+  final Map<DependencyKey, Object?> _shadowInstances = {};
   int _registrationCounter = 0;
   bool _isDisposed = false;
   bool _isFinal = false;
@@ -189,7 +200,17 @@ final class BridgeScope {
         throw BridgeDependencyAlreadyRegisteredException(T,
             instanceName: key.name);
       }
-      unawaited(existing.dispose());
+      // Fire-and-forget for the same reason as ModularBridge._register:
+      // registration is synchronous, so the old instance's disposal may
+      // overlap the replacement's first resolution.
+      unawaited(
+          existing.dispose().catchError((Object error, StackTrace stackTrace) {
+        reportBridgeError(
+          error,
+          stackTrace,
+          context: 'While disposing replaced dependency ${key.toString()}',
+        );
+      }));
     }
     final descriptor = DependencyDescriptor<T>(
       key: key,
@@ -284,7 +305,10 @@ final class BridgeScope {
     final descriptor = _registry[key];
     final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
     descriptor?.pendingResult = pending;
-    unawaited(pending.whenComplete(() {
+    // See ModularBridge.registerSingletonWithDependencies: the cleanup
+    // chain must swallow resolution errors (surfaced via pendingResult)
+    // instead of producing an unhandled async error.
+    unawaited(pending.then<void>((_) {}, onError: (_, __) {}).whenComplete(() {
       if (identical(descriptor?.pendingResult, pending)) {
         descriptor?.pendingResult = null;
       }
@@ -319,7 +343,10 @@ final class BridgeScope {
     final descriptor = _registry[key];
     final pending = getAsync<T>(instanceName: instanceName).then<void>((_) {});
     descriptor?.pendingResult = pending;
-    unawaited(pending.whenComplete(() {
+    // See ModularBridge.registerSingletonWithDependencies: the cleanup
+    // chain must swallow resolution errors (surfaced via pendingResult)
+    // instead of producing an unhandled async error.
+    unawaited(pending.then<void>((_) {}, onError: (_, __) {}).whenComplete(() {
       if (identical(descriptor?.pendingResult, pending)) {
         descriptor?.pendingResult = null;
       }
@@ -632,6 +659,32 @@ final class BridgeScope {
     registerSingleton<T>(instance, instanceName: instanceName, override: true);
   }
 
+  /// Test helper: replaces [T] with an async singleton resolved lazily on
+  /// the first [getAsync] call.
+  void overrideAsync<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+  }) {
+    registerAsyncSingleton<T>(
+      factory,
+      instanceName: instanceName,
+      override: true,
+    );
+  }
+
+  /// Test helper: replaces [T] with a transient factory producing a new
+  /// instance per resolution.
+  void overrideFactory<T extends Object>(
+    T Function() factory, {
+    String? instanceName,
+  }) {
+    registerFactory<T>(
+      factory,
+      instanceName: instanceName,
+      override: true,
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // RESOLUTION
   // ---------------------------------------------------------------------------
@@ -880,7 +933,9 @@ final class BridgeScope {
     Future<void> ready;
     if (descriptor.lifecycle == DependencyLifecycle.asyncSingleton) {
       ready = descriptor.readiness(startAsyncResolution: true);
-    } else if (descriptor.signalsReady || descriptor.dependsOn.isNotEmpty) {
+    } else if (descriptor.signalsReady ||
+        descriptor.dependsOn.isNotEmpty ||
+        descriptor.pendingResult != null) {
       ready = descriptor.readiness();
     } else {
       ready = Future<void>.value();
@@ -911,10 +966,10 @@ final class BridgeScope {
   }
 
   void _notifyShadowed(DependencyKey key, Object? instance) {
-    if (instance == null || _shadowNotified.contains(key)) return;
+    if (instance == null || _shadowInstances.containsKey(key)) return;
     final target = _findShadowedDescriptor(key)?.cachedInstance;
     if (target is ShadowChangeHandlers) {
-      _shadowNotified.add(key);
+      _shadowInstances[key] = instance;
       try {
         target.onGetShadowed(instance);
       } catch (error, stackTrace) {
@@ -928,12 +983,11 @@ final class BridgeScope {
   }
 
   void _releaseShadowNotifications() {
-    for (final key in _shadowNotified.toList()) {
-      final shadowed = _findShadowedDescriptor(key)?.cachedInstance;
-      final instance = _registry[key]?.cachedInstance;
-      if (shadowed is ShadowChangeHandlers && instance != null) {
+    for (final entry in _shadowInstances.entries) {
+      final shadowed = _findShadowedDescriptor(entry.key)?.cachedInstance;
+      if (shadowed is ShadowChangeHandlers) {
         try {
-          shadowed.onLeaveShadow(instance);
+          shadowed.onLeaveShadow(entry.value);
         } catch (error, stackTrace) {
           reportBridgeError(
             error,
@@ -943,7 +997,7 @@ final class BridgeScope {
         }
       }
     }
-    _shadowNotified.clear();
+    _shadowInstances.clear();
   }
 
   DependencyDescriptor<dynamic>? _findDescriptor(DependencyKey key) {
@@ -1085,16 +1139,17 @@ final class BridgeScope {
   /// Unregisters and disposes the scope-local dependency of type [T].
   ///
   /// Only affects registrations made directly on this scope; parent scope
-  /// and bridge registrations are untouched.
-  Future<void> unregister<T extends Object>({String? instanceName}) async {
+  /// and bridge registrations are untouched. Completes with `true` when a
+  /// registration was removed, `false` when the scope had no such
+  /// registration.
+  Future<bool> unregister<T extends Object>({String? instanceName}) async {
     _ensureNotDisposed();
     final key = DependencyKey(T, instanceName);
     final descriptor = _registry.remove(key);
-    if (descriptor != null) {
-      bridge.notifyDependencyEvent(
-          DependencyChangeKind.unregistered, descriptor);
-      await descriptor.dispose();
-    }
+    if (descriptor == null) return false;
+    bridge.notifyDependencyEvent(DependencyChangeKind.unregistered, descriptor);
+    await descriptor.dispose();
+    return true;
   }
 
   /// An unmodifiable snapshot of registration metadata for dependencies
@@ -1119,6 +1174,10 @@ final class BridgeScope {
     if (_isDisposed) return;
     _isDisposed = true;
     bridge.untrackScope(this);
+    // A stacked scope disposed directly must leave the scope stack, otherwise
+    // currentScope would keep returning this disposed scope and every
+    // resolution through the bridge would throw.
+    bridge.unstackScope(this);
 
     try {
       await onDisposeCallback?.call();
