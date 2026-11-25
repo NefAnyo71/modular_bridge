@@ -1,5 +1,5 @@
 name: modular_bridge_example
-description: "Demonstration of modular_bridge framework with Riverpod integration."
+description: "Full feature showcase for modular_bridge — pure Flutter, zero external state-management dependencies."
 publish_to: "none"
 version: 1.0.0+1
 
@@ -10,17 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: ^3.0.0
-  modular_bridge:
-    path: ../
-  modular_bridge_flutter:
-    path: ../modular_bridge_flutter
-
   material_ui: any
-
-dependency_overrides:
-  # modular_bridge_flutter depends on hosted modular_bridge; the example
-  # tracks the local core package instead.
   modular_bridge:
     path: ../
 

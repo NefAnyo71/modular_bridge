@@ -108,6 +108,17 @@ abstract class FeatureModule {
   /// verifying that eagerly resolved dependencies are usable.
   FutureOr<bool> healthCheck(ModularBridge bridge) => true;
 
+  /// Optional warmup hook invoked by [ModularBridge.warmup] after the
+  /// module's owned registrations have been resolved.
+  ///
+  /// Use it for startup preparation that is not a dependency resolution —
+  /// priming caches, prefetching remote config, or resolving dependencies
+  /// the module owns indirectly. Runs for every registered module when
+  /// `warmup()` is called without `ownerModule`, or only for the named
+  /// module when `ownerModule` is passed. Errors propagate to the
+  /// [ModularBridge.warmup] caller.
+  FutureOr<void> warmup(ModularBridge bridge) {}
+
   /// Lifecycle hook invoked when the module is being unregistered or the bridge is reset.
   ///
   /// Automatically cancels all subscriptions created via [subscribe].

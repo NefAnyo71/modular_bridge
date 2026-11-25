@@ -1,15 +1,17 @@
 import 'package:modular_bridge/modular_bridge.dart';
-import '../core/core_module.dart';
-import 'auth_repository.dart';
 
-/// Builds an [AuthRepositoryImpl] wired with the bridge's infrastructure
-/// dependencies. Shared by [AuthModule] registration and test-override
-/// restoration so both paths produce identical repositories.
-AuthRepository createAuthRepository(ModularBridge bridge) {
-  return AuthRepositoryImpl(
-    apiClient: bridge.get<ApiClient>(),
-    logger: bridge.get<LoggingService>(),
+import '../core/core_module.dart';
+import 'auth_service.dart';
+
+/// Builds an [AuthService] wired with the bridge's infrastructure.
+///
+/// `AuthService` receives a [Lazy<UserProfileService>] — the profile service
+/// depends back on `AuthService`, so this is what keeps the pair acyclic.
+AuthService createAuthService(ModularBridge bridge) {
+  return AuthService(
     bridge: bridge,
+    logger: bridge.get<LoggingService>(),
+    profile: bridge.lazy<UserProfileService>(),
   );
 }
 
@@ -23,9 +25,16 @@ final class AuthModule extends FeatureModule {
 
   @override
   void registerDependencies(ModularBridge bridge) {
-    // Registers AuthRepository using dependencies resolved from CoreModule
-    bridge.registerLazySingleton<AuthRepository>(
-        () => createAuthRepository(bridge));
+    bridge.registerLazySingleton<AuthService>(
+      () => createAuthService(bridge),
+      onDispose: (service) => service.dispose(),
+    );
+
+    // Eagerly depends on AuthService at construction, but AuthService only
+    // holds a Lazy back-reference — the cycle is broken.
+    bridge.registerLazySingleton<UserProfileService>(
+      () => UserProfileService(bridge.get<AuthService>()),
+    );
   }
 
   @override

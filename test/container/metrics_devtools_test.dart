@@ -118,6 +118,53 @@ void main() {
       await bridge.warmup();
       expect(rootDep, isTrue);
     });
+
+    test('warmup invokes module warmup hooks', () async {
+      final a = _WarmupHookModule('HookA');
+      final b = _WarmupHookModule('HookB');
+      await bridge.registerModules([a, b]);
+
+      await bridge.warmup();
+
+      expect(a.warmupCalls, 1);
+      expect(b.warmupCalls, 1);
+      expect(a.seenBridge, same(bridge));
+    });
+
+    test('warmup(ownerModule:) invokes only that module hook', () async {
+      final a = _WarmupHookModule('HookA');
+      final b = _WarmupHookModule('HookB');
+      await bridge.registerModules([a, b]);
+
+      await bridge.warmup(ownerModule: 'HookA');
+
+      expect(a.warmupCalls, 1);
+      expect(b.warmupCalls, 0);
+    });
+  });
+
+  group('Dependency event history', () {
+    test('dependencyEventHistory replays recent events then live', () async {
+      bridge.registerSingleton<int>(1);
+      bridge.registerSingleton<String>('a');
+      bridge.registerSingleton<double>(1.5);
+
+      final replayed =
+          await bridge.dependencyEventHistory(count: 2).take(2).toList();
+      expect(
+        replayed.map((e) => e.info.key.type),
+        [String, double],
+      );
+
+      final live = <DependencyRegistrationEvent>[];
+      final sub = bridge.dependencyEventHistory(count: 0).listen(live.add);
+      bridge.registerSingleton<bool>(true);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(live, hasLength(1));
+      expect(live.single.info.key.type, bool);
+    });
   });
 
   group('Module metrics', () {
@@ -211,5 +258,25 @@ class _WarmModule extends FeatureModule {
       onResolve();
       return 'warm';
     });
+  }
+}
+
+class _WarmupHookModule extends FeatureModule {
+  _WarmupHookModule(this.moduleName);
+
+  final String moduleName;
+  int warmupCalls = 0;
+  ModularBridge? seenBridge;
+
+  @override
+  String get name => moduleName;
+
+  @override
+  void registerDependencies(ModularBridge bridge) {}
+
+  @override
+  void warmup(ModularBridge bridge) {
+    warmupCalls++;
+    seenBridge = bridge;
   }
 }

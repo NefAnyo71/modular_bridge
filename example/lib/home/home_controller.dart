@@ -35,4 +35,3 @@ class HomeController extends ChangeNotifier {
     notifyListeners();
   }
 }
-

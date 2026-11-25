@@ -10,6 +10,7 @@ library;
 // Core DI & Container
 export 'src/core/container/dependency_descriptor.dart'
     show DependencyKey, DependencyLifecycle, Disposable, dep;
+export 'src/core/lazy.dart' show Lazy;
 export 'src/core/container/modular_bridge_container.dart'
     show ModularBridge, BridgeDiagnosticsReport;
 export 'src/core/container/bridge_scope.dart'
@@ -32,7 +33,9 @@ export 'src/core/container/resolution_interceptor.dart'
         BridgeResolutionRequest,
         BridgeResolutionTiming;
 
-// Exceptions & error reporting
+// Exceptions, error reporting & annotations
+export 'src/core/annotations.dart'
+    show immutable, mustCallSuper, protected, visibleForTesting;
 export 'src/core/errors/bridge_error_reporter.dart'
     show
         BridgeErrorReport,

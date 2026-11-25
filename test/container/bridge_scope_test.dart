@@ -336,6 +336,19 @@ void main() {
       });
     });
 
+    test('scope lazy resolves through the scope hierarchy', () {
+      final scope = bridge.createScope();
+      scope.registerSingleton<String>('scoped');
+
+      final lazy = scope.lazy<String>();
+      expect(lazy.value, 'scoped');
+      expect(lazy.instanceName, isNull);
+
+      // Named instance lookup also works through the scope.
+      bridge.registerSingleton<int>(7, instanceName: 'answer');
+      expect(scope.lazy<int>(instanceName: 'answer').value, 7);
+    });
+
     test('scope unregister returns whether a registration was removed',
         () async {
       final scope = bridge.createScope();

@@ -58,10 +58,42 @@ final class AnalyticsModule extends FeatureModule {
   void init(ModularBridge bridge) {
     final logService = bridge.get<EventLogService>();
 
-    // Listen to ALL BridgeEvents across the entire application
-    subscribe<BridgeEvent>(bridge, (event) {
-      logService.record(event);
-    });
+    // Listen to ALL BridgeEvents across the entire application.
+    // onError/onDone/cancelOnError are forwarded to the bus subscription.
+    subscribe<BridgeEvent>(
+      bridge,
+      (event) => logService.record(event),
+      onError: (error) => logService.record(_ErrorEvent('$error')),
+      onDone: () {},
+      cancelOnError: false,
+    );
+  }
+
+  @override
+  void warmup(ModularBridge bridge) {
+    // Runs after owned registrations resolved: force-resolve the log
+    // service and drop a synthetic marker into the console.
+    bridge.get<EventLogService>().record(_WarmupMarker());
+  }
+
+  @override
+  Future<bool> healthCheck(ModularBridge bridge) async {
+    // Healthy as long as the event log service resolved.
+    return bridge.tryGet<EventLogService>() != null;
   }
 }
 
+final class _WarmupMarker extends BridgeEvent {
+  _WarmupMarker();
+
+  @override
+  String toString() => 'AnalyticsModule warmed up';
+}
+
+final class _ErrorEvent extends BridgeEvent {
+  _ErrorEvent(this.message);
+  final String message;
+
+  @override
+  String toString() => 'BusError($message)';
+}

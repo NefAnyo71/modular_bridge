@@ -1,25 +1,31 @@
 {
   "environment": "dev",
   "common": {
-    "appName": "ModularBridge Riverpod Showcase",
-    "version": "0.2.0"
+    "appName": "ModularBridge Showcase",
+    "version": "1.0.0"
   },
   "environments": {
     "dev": {
-      "apiBaseUrl": "https://dev.api.modularbridge.io",
-      "apiTimeout": 15000,
+      "api": {
+        "baseUrl": "https://dev.api.modularbridge.io",
+        "timeoutMs": 15000
+      },
       "enableBiometrics": false,
       "retryCount": 3
     },
     "staging": {
-      "apiBaseUrl": "https://staging.api.modularbridge.io",
-      "apiTimeout": 10000,
+      "api": {
+        "baseUrl": "https://staging.api.modularbridge.io",
+        "timeoutMs": 10000
+      },
       "enableBiometrics": true,
       "retryCount": 2
     },
     "prod": {
-      "apiBaseUrl": "https://api.modularbridge.io",
-      "apiTimeout": 5000,
+      "api": {
+        "baseUrl": "https://api.modularbridge.io",
+        "timeoutMs": 5000
+      },
       "enableBiometrics": true,
       "retryCount": 1
     }

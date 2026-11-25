@@ -9,6 +9,7 @@ import '../../event_bus/bridge_event_bus.dart';
 import '../../event_bus/bridge_subscription.dart';
 import '../../module/feature_module.dart';
 import '../annotations.dart';
+import '../lazy.dart';
 import '../errors/bridge_error_reporter.dart';
 import '../exceptions/bridge_exceptions.dart';
 import 'bridge_scope.dart';
@@ -259,6 +260,12 @@ class ModularBridge {
       StreamController<BridgeConfig>.broadcast();
   final StreamController<DependencyRegistrationEvent> _dependencyEvents =
       StreamController<DependencyRegistrationEvent>.broadcast();
+  // Bounded replay buffer backing dependencyEventHistory(); entries carry a
+  // monotonic sequence so replay can be guarded against live delivery.
+  final List<({int sequence, DependencyRegistrationEvent event})>
+      _dependencyEventHistory = [];
+  int _dependencyEventSequence = 0;
+  static const int _maxDependencyEventHistory = 200;
 
   final Map<DependencyKey, DependencyDescriptor<dynamic>> _registry = {};
   final Map<String, FeatureModule> _modules = {};
@@ -318,6 +325,44 @@ class ModularBridge {
   Stream<DependencyRegistrationEvent> get onDependencyEvents =>
       _dependencyEvents.stream;
 
+  /// Returns a broadcast [Stream] that first replays up to the last [count]
+  /// buffered dependency registration events (bounded history), then
+  /// continues with live events — mirroring `BridgeEventBus.history`.
+  ///
+  /// The replay/live boundary is sequence-guarded: an event emitted after
+  /// the listener subscribed is delivered exactly once through the live
+  /// stream and never duplicated by the replay. History retains at most the
+  /// most recent 200 events.
+  Stream<DependencyRegistrationEvent> dependencyEventHistory({int count = 50}) {
+    if (_isDisposed) {
+      return const Stream.empty();
+    }
+    return Stream<DependencyRegistrationEvent>.multi((controller) {
+      if (_isDisposed) {
+        controller.closeSync();
+        return;
+      }
+      // Subscribe first so no live event can be lost, then replay only
+      // events recorded at or before the subscription marker.
+      final marker = _dependencyEventSequence;
+      final rawSub = _dependencyEvents.stream.listen(
+        controller.addSync,
+        onError: controller.addErrorSync,
+        onDone: controller.closeSync,
+      );
+      controller.onCancel = rawSub.cancel;
+
+      final snapshot = List.of(_dependencyEventHistory);
+      final start = snapshot.length > count ? snapshot.length - count : 0;
+      for (var i = start; i < snapshot.length; i++) {
+        final entry = snapshot[i];
+        if (entry.sequence <= marker) {
+          controller.addSync(entry.event);
+        }
+      }
+    });
+  }
+
   /// Emits a dependency change event. Called by [BridgeScope]; not part of
   /// the public API contract.
   void notifyDependencyEvent(
@@ -325,11 +370,20 @@ class ModularBridge {
     DependencyDescriptor<dynamic> descriptor,
   ) {
     if (_isDisposed || _dependencyEvents.isClosed) return;
-    _dependencyEvents.add(DependencyRegistrationEvent(
+    final event = DependencyRegistrationEvent(
       kind: kind,
       info: DependencyInfo.fromDescriptor(descriptor),
       scopeName: descriptor.scopeName,
+    );
+    _dependencyEventSequence++;
+    _dependencyEventHistory.add((
+      sequence: _dependencyEventSequence,
+      event: event,
     ));
+    if (_dependencyEventHistory.length > _maxDependencyEventHistory) {
+      _dependencyEventHistory.removeAt(0);
+    }
+    _dependencyEvents.add(event);
   }
 
   /// Names of all currently registered modules.
@@ -457,6 +511,26 @@ class ModularBridge {
     binding = (scope: scope, reset: reset);
     _configBindings.add(binding);
   }
+
+  /// Short alias for [registerConfigBinding].
+  void bind<T extends Object>({
+    required String configKey,
+    required T Function(dynamic value) decoder,
+    dynamic defaultValue,
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool signalsReady = false,
+  }) =>
+      registerConfigBinding<T>(
+        configKey: configKey,
+        decoder: decoder,
+        defaultValue: defaultValue,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+      );
 
   void _resubscribeConfigBindings() {
     unawaited(_configValueSubscription.cancel());
@@ -938,6 +1012,65 @@ class ModularBridge {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Short aliases — same registrations, shorter names. Use these for the
+  // common cases; the `register*` names remain for discoverability.
+  // -------------------------------------------------------------------------
+
+  /// Short alias for [registerSingleton].
+  void singleton<T extends Object>(
+    T instance, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool? signalsReady,
+    void Function(T instance)? onCreated,
+  }) =>
+      registerSingleton<T>(
+        instance,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+        onCreated: onCreated,
+      );
+
+  /// Short alias for [registerLazySingleton].
+  void lazySingleton<T extends Object>(
+    T Function() factory, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) =>
+      registerLazySingleton<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+
+  /// Short alias for [registerFactory] — a new instance per resolution.
+  void transient<T extends Object>(
+    T Function() factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) =>
+      registerFactory<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+
   /// Registers an asynchronous singleton for type [T].
   ///
   /// The [factory] is invoked lazily on the first [getAsync] call and the
@@ -989,6 +1122,30 @@ class ModularBridge {
       onCreated: onCreated,
     );
   }
+
+  /// Short alias for [registerAsyncSingleton].
+  void asyncSingleton<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool eager = false,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+    BridgeRetryPolicy? retryPolicy,
+  }) =>
+      registerAsyncSingleton<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        eager: eager,
+        signalsReady: signalsReady,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+        retryPolicy: retryPolicy,
+      );
 
   /// Registers a lazy asynchronous singleton for type [T].
   ///
@@ -1595,6 +1752,21 @@ class ModularBridge {
   T call<T extends Object>({String? instanceName}) =>
       get<T>(instanceName: instanceName);
 
+  /// Async counterpart of [call]: resolves [T] via [getAsync].
+  ///
+  /// ```dart
+  /// final config = await bridge.callAsync<ApiConfig>();
+  /// ```
+  Future<T> callAsync<T extends Object>({String? instanceName}) =>
+      getAsync<T>(instanceName: instanceName);
+
+  /// Returns a [Lazy] handle resolving [T] through this bridge on demand.
+  ///
+  /// Useful for breaking circular dependencies: the wrapped dependency is
+  /// only looked up when [Lazy.value] is accessed. See [Lazy] for details.
+  Lazy<T> lazy<T extends Object>({String? instanceName}) =>
+      Lazy<T>(this, instanceName: instanceName);
+
   /// Checks whether a dependency of type [T] is registered.
   bool isRegistered<T extends Object>({String? instanceName}) {
     final scope = _activeScope;
@@ -1743,7 +1915,9 @@ class ModularBridge {
   /// to surface DI misconfigurations before first use.
   ///
   /// Pass [ownerModule] (a [FeatureModule.name]) to warm up only the
-  /// dependencies registered on behalf of that module.
+  /// dependencies registered on behalf of that module — and to invoke only
+  /// that module's [FeatureModule.warmup] hook. Without [ownerModule], every
+  /// registered module's warmup hook runs after dependency resolution.
   Future<void> warmup({bool includeScopes = true, String? ownerModule}) async {
     _ensureActive();
     bool warmable(DependencyDescriptor<dynamic> d) =>
@@ -1774,6 +1948,14 @@ class ModularBridge {
       }
     }
     await Future.wait(futures);
+
+    // Module warmup hooks run after their owned dependencies resolved.
+    final modules = ownerModule == null
+        ? _modules.values
+        : _modules.values.where((m) => m.name == ownerModule);
+    for (final module in modules) {
+      await module.warmup(this);
+    }
   }
 
   List<DependencyDescriptor<dynamic>> _readinessDescriptors() {
@@ -2495,8 +2677,17 @@ class ModularBridge {
   BridgeSubscription subscribe<T extends BridgeEvent>(
     void Function(T event) onData, {
     String? ownerId,
+    void Function(Object error)? onError,
+    void Function()? onDone,
+    bool cancelOnError = false,
   }) {
-    return _eventBus.subscribe<T>(onData, ownerId: ownerId);
+    return _eventBus.subscribe<T>(
+      onData,
+      ownerId: ownerId,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
   }
 
   /// Returns a stream that replays the most recent event of type [T] (if any)

@@ -97,7 +97,7 @@ Add both to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_bridge: ^0.12.0
+  modular_bridge: ^0.13.0
   modular_bridge_flutter: ^0.1.0   # Flutter apps only
 ```
 
@@ -164,9 +164,50 @@ Everything below works identically in pure Dart and Flutter — the widget layer
 | Retry transient async failures | `retryPolicy: BridgeRetryPolicy(...)` |
 | Test override | `override<T>(mock)` or `createIsolated()` |
 
+Every `register*` API has a short alias for the common cases:
+`singleton`, `lazySingleton`, `transient`, `asyncSingleton`, and `bind`
+(config binding) — identical signatures, available on both `ModularBridge`
+and `BridgeScope`.
+
 ---
 
 ## 🚀 Quick Start & Step-by-Step Guide
+
+### ⚡ Minimal example — running in 60 seconds
+
+The smallest possible setup — everything else is detail:
+
+```dart
+// main.dart
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final bridge = ModularBridge.I;
+  bridge.setConfig(await BridgeConfig.fromAsset(
+    'assets/config.json',
+    loader: rootBundle.loadString,
+  ));
+  await bridge.registerModules([CoreModule(), AuthModule()]);
+
+  runApp(const MyApp());
+}
+
+// lib/features/core/core_module.dart — one method is enough:
+final class CoreModule extends FeatureModule {
+  @override
+  String get name => 'CoreModule';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {
+    bridge.registerSingleton<ApiClient>(ApiClient());
+  }
+}
+
+// Resolve anywhere with a single line:
+final api = ModularBridge.I.get<ApiClient>();
+```
+
+That's it — module, DI, config and the event bus are ready. Every piece is detailed below.
 
 ### 1. Type-Safe Flavor & Environment Management (`BridgeConfig`)
 
@@ -521,6 +562,25 @@ final maybe = await bridge.tryGetAsync<FeatureFlags>();
 
 Calling `bridge.get<DatabaseClient>()` on an async dependency throws `BridgeAsyncDependencyException`.
 For transient async resources use `registerFactoryAsync<T>()` — every `getAsync` produces a fresh instance.
+
+#### Circular Dependencies (`Lazy<T>`)
+
+When two dependencies genuinely reference each other, wrap one side in a `Lazy<T>` so it resolves on first access instead of during registration:
+
+```dart
+bridge.registerLazySingleton<ServiceA>(
+  () => ServiceA(bridge.lazy<ServiceB>()),
+);
+bridge.registerLazySingleton<ServiceB>(
+  () => ServiceB(bridge.get<ServiceA>()),
+);
+
+final a = bridge.get<ServiceA>();
+final b = a.lazyB.value; // resolved on demand — no cycle
+// or: await a.lazyB.resolveAsync() for async lifecycles
+```
+
+`Lazy` resolves through the normal lookup rules (named instances, scope chains via `scope.lazy<T>()`), so it behaves exactly like a deferred `get`. `await bridge.callAsync<T>()` is also available as the async counterpart of `bridge<T>()`.
 
 #### Startup Readiness (`allReady` / `isReady`)
 
@@ -1094,6 +1154,10 @@ try {
 | `FeatureModule.environments` | Restrict a module to specific `BridgeEnvironment`s |
 | `bridge.assertRegistered` / `assertAllReadySync` / `pendingReadinessKeys` | Test helpers (`@visibleForTesting`) |
 | `bridge.getAsync<T>()` / `tryGetAsync<T>()` | Async resolution; concurrent calls share one in-flight factory |
+| `bridge.lazy<T>()` / `scope.lazy<T>()` / `Lazy<T>` | Deferred handle breaking circular dependencies; resolves via `.value` / `.resolveAsync()` |
+| `bridge.callAsync<T>()` / `scope.callAsync<T>()` | Async counterpart of the `call` syntax |
+| `FeatureModule.warmup(bridge)` | Startup hook run by `bridge.warmup()` after owned dependencies resolve |
+| `bridge.dependencyEventHistory({count})` | Replay-then-live stream over bounded dependency-registration history |
 | `bridge.allReady({timeout})` / `allReadySync()` | Waits for / checks all readiness-tracked registrations |
 | `bridge.isReady<T>({timeout})` / `isReadySync<T>()` | Per-dependency readiness check |
 | `bridge.signalReady(instance)` | Manually completes a `signalsReady` / `WillSignalReady` registration |

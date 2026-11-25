@@ -65,6 +65,37 @@ void main() {
       await expectLater(bridge.allReady(), throwsA(anything));
     });
 
+    test('Lazy breaks circular dependencies', () {
+      bridge.registerLazySingleton<_LazyA>(
+        () => _LazyA(bridge.lazy<_LazyB>()),
+      );
+      bridge.registerLazySingleton<_LazyB>(
+        () => _LazyB(bridge.get<_LazyA>()),
+      );
+
+      final a = bridge.get<_LazyA>();
+      final b = a.lazyB.value;
+
+      expect(identical(b.a, a), isTrue);
+      expect(identical(a.lazyB.value, b), isTrue);
+    });
+
+    test('Lazy resolves named instances and async dependencies', () async {
+      bridge.registerAsyncSingleton<AsyncConfig>(
+        () async => AsyncConfig('cfg'),
+        instanceName: 'named',
+      );
+      final lazy = bridge.lazy<AsyncConfig>(instanceName: 'named');
+
+      expect(lazy.instanceName, 'named');
+      expect((await lazy.resolveAsync()).value, 'cfg');
+    });
+
+    test('callAsync resolves dependencies', () async {
+      bridge.registerSingleton<String>('v');
+      expect(await bridge.callAsync<String>(), 'v');
+    });
+
     test('registers and resolves lazy singleton on demand', () {
       var factoryCalls = 0;
       bridge.registerLazySingleton<UserRepository>(() {
@@ -675,3 +706,14 @@ class ApiConfigHolder {
   final String token;
   final AsyncConfig remote;
 }
+
+class _LazyA {
+  _LazyA(this.lazyB);
+  final Lazy<_LazyB> lazyB;
+}
+
+class _LazyB {
+  _LazyB(this.a);
+  final _LazyA a;
+}
+

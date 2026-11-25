@@ -31,4 +31,3 @@ final class CartClearedEvent extends CartEvent {
   @override
   String toString() => 'CartClearedEvent(reason: "$reason")';
 }
-

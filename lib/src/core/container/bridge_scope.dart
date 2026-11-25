@@ -3,6 +3,7 @@ import 'dart:async';
 import '../annotations.dart';
 import '../errors/bridge_error_reporter.dart';
 import '../exceptions/bridge_exceptions.dart';
+import '../lazy.dart';
 import 'dependency_descriptor.dart';
 import 'dependency_event.dart';
 import 'modular_bridge_container.dart';
@@ -371,6 +372,65 @@ final class BridgeScope {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Short aliases — same registrations, shorter names (parity with
+  // ModularBridge.singleton/lazySingleton/transient/asyncSingleton).
+  // -------------------------------------------------------------------------
+
+  /// Short alias for [registerSingleton].
+  void singleton<T extends Object>(
+    T instance, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool? signalsReady,
+    void Function(T instance)? onCreated,
+  }) =>
+      registerSingleton<T>(
+        instance,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+        onCreated: onCreated,
+      );
+
+  /// Short alias for [registerLazySingleton].
+  void lazySingleton<T extends Object>(
+    T Function() factory, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) =>
+      registerLazySingleton<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        signalsReady: signalsReady,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+
+  /// Short alias for [registerFactory] — a new instance per resolution.
+  void transient<T extends Object>(
+    T Function() factory, {
+    String? instanceName,
+    bool override = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) =>
+      registerFactory<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
+
   /// Registers an asynchronous singleton within this scope.
   ///
   /// Resolved with [getAsync]; concurrent calls share a single in-flight
@@ -397,6 +457,28 @@ final class BridgeScope {
       onCreated: onCreated,
     );
   }
+
+  /// Short alias for [registerAsyncSingleton].
+  void asyncSingleton<T extends Object>(
+    Future<T> Function() factory, {
+    String? instanceName,
+    bool override = false,
+    void Function(T instance)? onDispose,
+    bool eager = false,
+    bool signalsReady = false,
+    Iterable<DependencyKey> dependsOn = const [],
+    void Function(T instance)? onCreated,
+  }) =>
+      registerAsyncSingleton<T>(
+        factory,
+        instanceName: instanceName,
+        override: override,
+        onDispose: onDispose,
+        eager: eager,
+        signalsReady: signalsReady,
+        dependsOn: dependsOn,
+        onCreated: onCreated,
+      );
 
   /// Registers a lazy asynchronous singleton within this scope.
   ///
@@ -879,6 +961,16 @@ final class BridgeScope {
   /// Callable syntax shortcut for [get].
   T call<T extends Object>({String? instanceName}) =>
       get<T>(instanceName: instanceName);
+
+  /// Async counterpart of [call]: resolves [T] via [getAsync] through this
+  /// scope's hierarchy.
+  Future<T> callAsync<T extends Object>({String? instanceName}) =>
+      getAsync<T>(instanceName: instanceName);
+
+  /// Returns a [Lazy] handle resolving [T] through this scope's hierarchy
+  /// (scope → parents → root bridge) on demand.
+  Lazy<T> lazy<T extends Object>({String? instanceName}) =>
+      Lazy<T>.scoped(this, instanceName: instanceName);
 
   /// Attempts to resolve [T] from this scope or its ancestors.
   T? tryGet<T extends Object>({String? instanceName}) {

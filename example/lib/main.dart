@@ -1,40 +1,38 @@
+// ModularBridge Feature Showcase — pure Flutter, zero external
+// state-management dependencies.
 //
-// ⚠️ WARNING:
-// This example uses Riverpod for state management. For large, real-world
-// projects we strongly recommend pairing ModularBridge with a dedicated
-// state management package (Riverpod, Bloc, Provider, etc.). ModularBridge
-// only provides DI, modules, config, and the event bus — it is NOT a state
-// manager. Using it without one forces manual widget rebuild/state
-// synchronization, which can severely hurt app performance.
+// Every reactive surface in this app is driven by either:
+//   • ChangeNotifier services resolved from the DI container
+//     (AuthService, CartService, HomeController, EventLogService), or
+//   • plain StatefulWidget setState for ephemeral UI state.
+//
+// Showcased ModularBridge features: type-safe config from assets,
+// environment hot-switching, registerConfigBinding, parallel module
+// registration, warmup hooks, health checks, Lazy<T> circular-dependency
+// breaking, async singletons with BridgeRetryPolicy, module.subscribe
+// options, scope stack with per-scope config overrides, 1-line overrides,
+// callAsync, event interceptors (veto), resolution interceptors,
+// metrics, diagnosticsReport, dependencyEventHistory and enableDevTools.
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
+import 'package:modular_bridge/modular_bridge.dart';
 
 import 'analytics/analytics_module.dart';
-import 'analytics/analytics_providers.dart';
 import 'auth/auth_module.dart';
-import 'auth/auth_providers.dart';
+import 'auth/auth_service.dart';
 import 'cart/cart_module.dart';
-import 'cart/cart_providers.dart';
+import 'cart/cart_service.dart';
 import 'core/core_module.dart';
-import 'core/core_providers.dart';
+import 'home/home_controller.dart';
 import 'home/home_module.dart';
-import 'home/home_providers.dart';
 
-/// Riverpod [Notifier] tracking the active bottom navigation tab index.
-class SelectedTabNotifier extends Notifier<int> {
-  @override
-  int build() => 0;
-
-  /// Switches the active tab.
-  void select(int index) => state = index;
-}
-
-/// Provider for the active bottom navigation tab index.
-final selectedTabProvider =
-    NotifierProvider<SelectedTabNotifier, int>(SelectedTabNotifier.new);
-
-/// Builds a fresh list of all feature modules in dependency-safe order.
+/// Builds a fresh list of all feature modules.
+///
+/// `parallel: true` initializes independent modules concurrently while the
+/// topological sort still guarantees `dependencies` order.
 List<FeatureModule> buildFeatureModules() => [
       CoreModule(),
       AnalyticsModule(),
@@ -43,30 +41,46 @@ List<FeatureModule> buildFeatureModules() => [
       CartModule(),
     ];
 
+/// Shared flag for the event-console "veto ping events" interceptor demo.
+final ValueNotifier<bool> vetoPingEvents = ValueNotifier<bool>(false);
+
+/// Last resolution timing reported by the timing interceptor.
+final ValueNotifier<String> lastResolutionTiming = ValueNotifier<String>('—');
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize Type-Safe Configuration from a bundled JSON asset.
-  //    assets/config.json holds `common` + per-environment maps; the
-  //    `environment:` parameter overrides the JSON "environment" key.
-  //    apiTimeout is stored as integer milliseconds (getDuration coerces).
-  final config = await loadBridgeConfigFromAsset(
+  // 1. Type-safe config from a bundled JSON asset.
+  final config = await BridgeConfig.fromAsset(
     'assets/config.json',
+    loader: rootBundle.loadString,
     environment: BridgeEnvironment.dev,
   );
-
   ModularBridge.I.setConfig(config);
 
-  // 2. Register feature modules in decoupled order
-  await ModularBridge.I.registerModules(buildFeatureModules());
+  // 2. Feature modules — parallel registration + warmup hooks.
+  await ModularBridge.I.registerModules(buildFeatureModules(), parallel: true);
+  await ModularBridge.I.warmup();
 
-  runApp(
-    const ProviderScope(
-      child: ModularBridgeProvider(
-        child: ModularBridgeExampleApp(),
-      ),
-    ),
+  // 3. DevTools VM service extensions (ext.modular_bridge.*).
+  ModularBridge.I.enableDevTools();
+
+  // 4. Resolution interceptor: structured timing for every get/getAsync.
+  ModularBridge.I.addResolutionInterceptor(
+    BridgeInterceptors.timing((t) {
+      lastResolutionTiming.value =
+          '${t.request.type} ${t.elapsed.inMicroseconds}µs';
+    }),
   );
+
+  // 5. Event interceptor: observe-only pass-through that can veto ping
+  //    events when the console toggle is on (fan-out/veto demo).
+  ModularBridge.I.eventBus.addEventInterceptor((event, next) {
+    if (vetoPingEvents.value && event is _PingEvent) return; // veto
+    next(event);
+  });
+
+  runApp(const ModularBridgeExampleApp());
 }
 
 class ModularBridgeExampleApp extends StatelessWidget {
@@ -75,7 +89,7 @@ class ModularBridgeExampleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ModularBridge Riverpod Showcase',
+      title: 'ModularBridge Showcase',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -87,17 +101,26 @@ class ModularBridgeExampleApp extends StatelessWidget {
   }
 }
 
-/// Main showcase screen built completely as a Riverpod [ConsumerWidget].
-///
-/// Notice: ZERO [setState] calls. All reactive state flows cleanly through Riverpod Notifiers.
-class ShowcaseScreen extends ConsumerWidget {
+class ShowcaseScreen extends StatefulWidget {
   const ShowcaseScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final environment = ref.watch(environmentProvider);
-    final selectedTab = ref.watch(selectedTabProvider);
-    final bridge = ref.watch(bridgeProvider);
+  State<ShowcaseScreen> createState() => _ShowcaseScreenState();
+}
+
+class _ShowcaseScreenState extends State<ShowcaseScreen> {
+  int _tab = 0;
+
+  // Bumped after module load/unload or mock toggle so tabs re-resolve
+  // services through tryGet (module unload disposes old instances).
+  int _servicesVersion = 0;
+
+  void _servicesChanged() => setState(() => _servicesVersion++);
+
+  @override
+  Widget build(BuildContext context) {
+    final bridge = ModularBridge.I;
+    final environment = bridge.config.environment;
 
     return Scaffold(
       appBar: AppBar(
@@ -105,136 +128,70 @@ class ShowcaseScreen extends ConsumerWidget {
           children: [
             Icon(Icons.hub_outlined, color: Colors.indigo),
             SizedBox(width: 8),
-            Text(
-              'ModularBridge Architecture',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            Text('ModularBridge',
+                style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
         elevation: 1,
         actions: [
-          // Active flavor badge
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: environment.isProd
-                  ? Colors.red.shade100
-                  : (environment.isStaging
-                      ? Colors.amber.shade100
-                      : Colors.green.shade100),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: environment.isProd
-                    ? Colors.red.shade400
-                    : (environment.isStaging
-                        ? Colors.amber.shade700
-                        : Colors.green.shade600),
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  environment.isProd
-                      ? Icons.rocket_launch
-                      : (environment.isStaging
-                          ? Icons.science
-                          : Icons.developer_mode),
-                  size: 16,
-                  color: environment.isProd
-                      ? Colors.red.shade900
-                      : (environment.isStaging
-                          ? Colors.amber.shade900
-                          : Colors.green.shade900),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  environment.name.toUpperCase(),
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color: environment.isProd
-                        ? Colors.red.shade900
-                        : (environment.isStaging
-                            ? Colors.amber.shade900
-                            : Colors.green.shade900),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
+          _EnvBadge(environment: environment),
           IconButton(
-            tooltip: 'Reset and Reinitialize Bridge',
+            tooltip: 'Reset container & re-register modules',
             icon: const Icon(Icons.refresh),
             onPressed: () async {
-              try {
-                await bridge.reset();
-                await bridge.registerModules(buildFeatureModules());
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Reset failed: $e')),
-                  );
-                }
-                return;
-              }
-              ref.invalidate(environmentProvider);
-              ref.invalidate(modulesProvider);
-              ref.invalidate(authProvider);
-              ref.invalidate(cartProvider);
-              ref.invalidate(homeFeedProvider);
-              ref.invalidate(eventLogsProvider);
-
+              final bridge = ModularBridge.I;
+              await bridge.reset();
+              await bridge.registerModules(buildFeatureModules());
+              await bridge.warmup();
+              _servicesChanged();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'ModularBridge container reset & Riverpod refreshed!'),
-                    duration: Duration(seconds: 2),
-                  ),
+                  const SnackBar(content: Text('Bridge reset & warmed up')),
                 );
               }
             },
           ),
-          const SizedBox(width: 8),
         ],
       ),
-      body: IndexedStack(
-        index: selectedTab,
-        children: const [
-          _AppFlowTab(),
-          _EventConsoleTab(),
-          _ModuleInspectorTab(),
-          _ConfigStudioTab(),
-        ],
+      body: AnimatedBuilder(
+        animation: Listenable.merge([vetoPingEvents, lastResolutionTiming]),
+        builder: (context, _) => IndexedStack(
+          index: _tab,
+          children: [
+            _FlowTab(
+                key: ValueKey('flow$_servicesVersion'),
+                onServicesChanged: _servicesChanged),
+            _EventConsoleTab(key: ValueKey('events$_servicesVersion')),
+            _InspectorTab(
+                key: ValueKey('inspector$_servicesVersion'),
+                onServicesChanged: _servicesChanged),
+            const _ConfigStudioTab(key: ValueKey('config')),
+          ],
+        ),
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: selectedTab,
-        onDestinationSelected: (index) {
-          ref.read(selectedTabProvider.notifier).select(index);
-        },
+        selectedIndex: _tab,
+        onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard),
-            label: 'Modules Flow',
+            label: 'Flow',
           ),
           NavigationDestination(
             icon: Icon(Icons.terminal_outlined),
             selectedIcon: Icon(Icons.terminal),
-            label: 'Event Console',
+            label: 'Events',
           ),
           NavigationDestination(
             icon: Icon(Icons.layers_outlined),
             selectedIcon: Icon(Icons.layers),
-            label: 'Module Inspector',
+            label: 'Inspector',
           ),
           NavigationDestination(
             icon: Icon(Icons.tune_outlined),
             selectedIcon: Icon(Icons.tune),
-            label: 'Config Studio',
+            label: 'Config',
           ),
         ],
       ),
@@ -242,315 +199,417 @@ class ShowcaseScreen extends ConsumerWidget {
   }
 }
 
-// =============================================================================
-// TAB 1: INTERACTIVE APP FLOW (Auth, Cart, Home via Riverpod)
-// =============================================================================
-class _AppFlowTab extends ConsumerWidget {
-  const _AppFlowTab();
+class _EnvBadge extends StatelessWidget {
+  const _EnvBadge({required this.environment});
+  final BridgeEnvironment environment;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final authState = ref.watch(authProvider);
-    final isMockActive = ref.watch(mockOverrideProvider);
-    final cartItems = ref.watch(cartProvider);
-    final cartCount = ref.watch(cartCountProvider);
-    final cartTotal = ref.watch(cartTotalProvider);
-    final homeFeed = ref.watch(homeFeedProvider);
+  Widget build(BuildContext context) {
+    final (bg, fg, icon) = switch (environment) {
+      BridgeEnvironment.prod => (
+          Colors.red.shade100,
+          Colors.red.shade900,
+          Icons.rocket_launch
+        ),
+      BridgeEnvironment.staging => (
+          Colors.amber.shade100,
+          Colors.amber.shade900,
+          Icons.science
+        ),
+      _ => (Colors.green.shade100, Colors.green.shade900, Icons.developer_mode),
+    };
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: fg.withAlpha(120)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: fg),
+          const SizedBox(width: 4),
+          Text(environment.name.toUpperCase(),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 12, color: fg)),
+        ],
+      ),
+    );
+  }
+}
 
-    return ListView(
-      padding: const EdgeInsets.all(16.0),
-      children: [
-        // Information banner
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.indigo.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.indigo.shade200),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.info_outline, color: Colors.indigo),
+/// Wraps a [ChangeNotifier] service resolved from the container; shows a
+/// hint card when the owning module is currently unloaded.
+class _ServiceBuilder extends StatelessWidget {
+  const _ServiceBuilder({required this.service, required this.builder});
+
+  final ChangeNotifier? service;
+  final Widget Function(BuildContext context, ChangeNotifier service) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final service = this.service;
+    if (service == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: const [
+              Icon(Icons.hourglass_empty, color: Colors.grey),
               SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  '100% Riverpod State Management: CartModule & HomeModule react to '
-                  'UserLoggedOutEvent without importing AuthModule!',
-                  style: TextStyle(fontSize: 13, color: Colors.indigo),
+                  'Module not loaded — open the Inspector tab and load it.',
+                  style: TextStyle(color: Colors.grey),
                 ),
               ),
             ],
           ),
         ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: service,
+      builder: (context, _) => builder(context, service),
+    );
+  }
+}
+
+Widget _card(BuildContext context, {required Widget child}) => Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
+    );
+
+// =============================================================================
+// TAB 1: APP FLOW � Auth (Lazy circular dep + override), Cart, Home, Async
+// =============================================================================
+class _FlowTab extends StatefulWidget {
+  const _FlowTab({super.key, required this.onServicesChanged});
+  final VoidCallback onServicesChanged;
+
+  @override
+  State<_FlowTab> createState() => _FlowTabState();
+}
+
+class _FlowTabState extends State<_FlowTab> {
+  String _asyncInfo = '�';
+  String _pingResult = '�';
+
+  ModularBridge get bridge => ModularBridge.I;
+
+  Future<void> _resolveSessionStore() async {
+    // callAsync: async counterpart of the call syntax.
+    final store = await bridge.callAsync<SessionStore>();
+    setState(() =>
+        _asyncInfo = '${store.endpoint} � connected=${store.isConnected}');
+  }
+
+  Future<void> _pingApi() async {
+    final client = await bridge.callAsync<ApiClient>();
+    final result = await client.get('/ping');
+    setState(() => _pingResult = result);
+  }
+
+  void _toggleMock(bool useMock) {
+    final bridge = ModularBridge.I;
+    if (useMock) {
+      bridge.override<AuthService>(MockAuthService(
+        bridge: bridge,
+        logger: bridge.get<LoggingService>(),
+      ));
+    } else {
+      bridge.override<AuthService>(createAuthService(bridge));
+    }
+    widget.onServicesChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = bridge.tryGet<AuthService>();
+    final cart = bridge.tryGet<CartService>();
+    final home = bridge.tryGet<HomeController>();
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _InfoBanner(
+          text:
+              'Pure Flutter showcase: AuthService holds a Lazy<UserProfileService> '
+              'to break a circular dependency. Cart/Home react to auth events '
+              'with zero imports between modules.',
+        ),
         const SizedBox(height: 16),
 
-        // 1. Auth Module Card
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side:
-                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.security, color: Colors.indigo),
-                        SizedBox(width: 8),
-                        Text(
-                          'AuthModule (DI & Events)',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                      ],
+        // ---- Auth ------------------------------------------------------
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.security, color: Colors.indigo),
+                    SizedBox(width: 8),
+                    Text('AuthModule (Lazy + Override)',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                  ]),
+                  Row(children: [
+                    const Text('Mock', style: TextStyle(fontSize: 12)),
+                    Switch(
+                      value: auth is MockAuthService,
+                      onChanged: _toggleMock,
                     ),
-                    Row(
-                      children: [
-                        const Text('Use Mock:', style: TextStyle(fontSize: 12)),
-                        Switch(
-                          value: isMockActive,
-                          onChanged: (useMock) {
-                            ref
-                                .read(mockOverrideProvider.notifier)
-                                .toggle(useMock);
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
+                  ]),
+                ],
+              ),
+              Text(
+                auth == null
+                    ? 'AuthModule unloaded'
+                    : auth.isAuthenticated
+                        ? '? ${auth.currentEmail} � profile: ${auth.profile.displayName}'
+                        : '? Signed out',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: auth?.isAuthenticated == true
+                      ? Colors.green.shade700
+                      : Colors.grey,
+                  fontWeight: FontWeight.w600,
                 ),
-                Text(
-                  isMockActive
-                      ? '● Active: MockAuthRepository (1-line test override via Riverpod)'
-                      : '● Active: AuthRepositoryImpl (Real dependency)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isMockActive
-                        ? Colors.deepOrange
-                        : Colors.green.shade700,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Divider(height: 24),
-                Row(
-                  children: [
+              ),
+              const Divider(height: 20),
+              _ServiceBuilder(
+                service: auth,
+                builder: (context, service) {
+                  final authService = service as AuthService;
+                  return Row(children: [
                     Expanded(
                       child: ElevatedButton.icon(
                         icon: const Icon(Icons.login),
-                        label: Text(
-                          authState.isAuthenticated
-                              ? 'Logged In: ${authState.email}'
-                              : 'Login (developer@flutter.io)',
-                        ),
-                        onPressed: authState.isAuthenticated
+                        label: Text(authService.isAuthenticated
+                            ? 'Logged in'
+                            : 'Login (dev@modular.dev)'),
+                        onPressed: authService.isAuthenticated ||
+                                authService.isLoading
                             ? null
-                            : () async {
-                                await ref
-                                    .read(authProvider.notifier)
-                                    .login('developer@flutter.io', 'pass123');
-                              },
+                            : () =>
+                                authService.login('dev@modular.dev', 'pass123'),
                       ),
                     ),
                     const SizedBox(width: 8),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.logout),
                       label: const Text('Logout'),
-                      onPressed: !authState.isAuthenticated
-                          ? null
-                          : () async {
-                              await ref.read(authProvider.notifier).logout();
-                            },
+                      onPressed: authService.isAuthenticated
+                          ? () => authService.logout()
+                          : null,
                     ),
-                  ],
-                ),
-              ],
-            ),
+                  ]);
+                },
+              ),
+            ],
           ),
         ),
-
         const SizedBox(height: 16),
 
-        // 2. Shopping Cart Card
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side:
-                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.shopping_cart_outlined,
-                            color: Colors.teal),
-                        const SizedBox(width: 8),
-                        Text(
-                          'CartModule ($cartCount items)',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                      ],
-                    ),
-                    if (cartCount > 0)
-                      Text(
-                        'Total: \$${cartTotal.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.teal,
-                          fontSize: 15,
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'CartNotifier listens to UserLoggedOutEvent via BridgeEventBus. '
-                  'Logging out clears this cart automatically!',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-                const Divider(height: 20),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ActionChip(
-                      avatar: const Icon(Icons.add, size: 16),
-                      label: const Text('Flutter Hoodie (\$49)'),
-                      onPressed: () {
-                        ref
-                            .read(cartProvider.notifier)
-                            .addItem('Flutter Hoodie', 49.0);
-                      },
-                    ),
-                    ActionChip(
-                      avatar: const Icon(Icons.add, size: 16),
-                      label: const Text('Dart Mug (\$15)'),
-                      onPressed: () {
-                        ref
-                            .read(cartProvider.notifier)
-                            .addItem('Dart Mug', 15.0);
-                      },
-                    ),
-                    ActionChip(
-                      avatar: const Icon(Icons.add, size: 16),
-                      label: const Text('Dev Laptop (\$1,299)'),
-                      onPressed: () {
-                        ref
-                            .read(cartProvider.notifier)
-                            .addItem('Dev Laptop', 1299.0);
-                      },
-                    ),
-                    if (cartCount > 0)
-                      ActionChip(
-                        avatar: const Icon(Icons.clear_all,
-                            size: 16, color: Colors.red),
-                        label: const Text('Clear Cart'),
-                        onPressed: () {
-                          ref.read(cartProvider.notifier).clear();
-                        },
-                      ),
-                  ],
-                ),
-                if (cartItems.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  ...cartItems.map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2.0),
-                      child: Row(
+        // ---- Cart ------------------------------------------------------
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ServiceBuilder(
+                service: cart,
+                builder: (context, service) {
+                  final cartService = service as CartService;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('• ${item.name}',
-                              style: const TextStyle(fontSize: 13)),
-                          Text(
-                            '\$${item.price.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
+                          Row(children: [
+                            const Icon(Icons.shopping_cart_outlined,
+                                color: Colors.teal),
+                            const SizedBox(width: 8),
+                            Text('CartModule (${cartService.itemCount})',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 16)),
+                          ]),
+                          Text('\$${cartService.totalPrice.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.teal)),
                         ],
                       ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'CartService is a ChangeNotifier resolved from DI � '
+                        'AnimatedBuilder rebuilds this card. Logout clears '
+                        'the cart via UserLoggedOutEvent.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const Divider(height: 20),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final (name, price) in [
+                            ('Flutter Hoodie', 49.0),
+                            ('Dart Mug', 15.0),
+                            ('Dev Laptop', 1299.0),
+                          ])
+                            ActionChip(
+                              avatar: const Icon(Icons.add, size: 16),
+                              label: Text('$name (\$$price)'),
+                              onPressed: () => cartService.addItem(name, price),
+                            ),
+                          if (cartService.itemCount > 0)
+                            ActionChip(
+                              avatar: const Icon(Icons.clear_all,
+                                  size: 16, color: Colors.red),
+                              label: const Text('Clear'),
+                              onPressed: () => cartService.clear(),
+                            ),
+                        ],
+                      ),
+                      if (cartService.items.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        for (final item in cartService.items)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('� ${item.name}',
+                                    style: const TextStyle(fontSize: 13)),
+                                Text('\$${item.price.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13)),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ],
           ),
         ),
-
         const SizedBox(height: 16),
 
-        // 3. Home Feed Card
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side:
-                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+        // ---- Home ------------------------------------------------------
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ServiceBuilder(
+                service: home,
+                builder: (context, service) {
+                  final homeController = service as HomeController;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(children: [
+                        Icon(Icons.feed_outlined, color: Colors.deepPurple),
+                        SizedBox(width: 8),
+                        Text('HomeModule (Event-driven feed)',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16)),
+                      ]),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'HomeController subscribes to login/logout events '
+                        'inside module.init � decoupled from AuthModule.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const Divider(height: 20),
+                      if (homeController.isLoading)
+                        const Center(
+                            child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: CircularProgressIndicator(),
+                        ))
+                      else if (homeController.feedItems.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(
+                            child: Text(
+                              'No feed items.\nLog in to trigger UserLoggedInEvent.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          ),
+                        )
+                      else
+                        for (final item in homeController.feedItems)
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.check_circle_outline,
+                                color: Colors.teal, size: 20),
+                            title: Text(item,
+                                style: const TextStyle(fontSize: 13)),
+                          ),
+                    ],
+                  );
+                },
+              ),
+            ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.feed_outlined, color: Colors.deepPurple),
-                    SizedBox(width: 8),
-                    Text(
-                      'HomeModule (Riverpod Stream Feed)',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                  ],
+        ),
+        const SizedBox(height: 16),
+
+        // ---- Async / callAsync -----------------------------------------
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.sync, color: Colors.blueGrey),
+                SizedBox(width: 8),
+                Text('Async lifecycles & callAsync',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ]),
+              const SizedBox(height: 8),
+              const Text(
+                'SessionStore is an eager asyncSingleton with a '
+                'BridgeRetryPolicy � resolved during warmup(). ApiClient is '
+                'config-bound: switching environment rebuilds it '
+                'automatically.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const Divider(height: 20),
+              Wrap(spacing: 8, children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.storage, size: 18),
+                  label: const Text('Resolve SessionStore'),
+                  onPressed: _resolveSessionStore,
                 ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Feed is managed by HomeFeedNotifier which listens to UserLoggedInEvent / UserLoggedOutEvent.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.network_ping, size: 18),
+                  label: const Text('Ping API (callAsync)'),
+                  onPressed: _pingApi,
                 ),
-                const Divider(height: 20),
-                if (homeFeed.isLoading)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(16.0),
-                      child: CircularProgressIndicator(),
-                    ),
-                  )
-                else if (homeFeed.items.isEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    alignment: Alignment.center,
-                    child: const Text(
-                      'No feed items.\nLog in to trigger UserLoggedInEvent across the bridge.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  )
-                else
-                  ...homeFeed.items.map(
-                    (item) => ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.check_circle_outline,
-                          color: Colors.teal, size: 20),
-                      title: Text(item, style: const TextStyle(fontSize: 13)),
-                    ),
-                  ),
-              ],
-            ),
+              ]),
+              const SizedBox(height: 8),
+              Text('session: $_asyncInfo',
+                  style: const TextStyle(fontSize: 12)),
+              Text('ping: $_pingResult', style: const TextStyle(fontSize: 12)),
+            ],
           ),
         ),
       ],
@@ -559,15 +618,15 @@ class _AppFlowTab extends ConsumerWidget {
 }
 
 // =============================================================================
-// TAB 2: LIVE EVENT CONSOLE (Real-time Event Stream via Riverpod)
+// TAB 2: EVENT CONSOLE � live bus feed, veto interceptor, once(), publishCounts
 // =============================================================================
-class _EventConsoleTab extends ConsumerWidget {
-  const _EventConsoleTab();
+class _EventConsoleTab extends StatelessWidget {
+  const _EventConsoleTab({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final eventLogs = ref.watch(eventLogsProvider);
-    final totalPublished = ref.watch(bridgeProvider).eventBus.totalPublished;
+  Widget build(BuildContext context) {
+    final bridge = ModularBridge.I;
+    final logService = bridge.tryGet<EventLogService>();
 
     return Column(
       children: [
@@ -580,87 +639,82 @@ class _EventConsoleTab extends ConsumerWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Event Bus Stream (${eventLogs.length} shown • '
-                  '$totalPublished published)',
+                  'Event Bus (${bridge.eventBus.totalPublished} published)',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              ValueListenableBuilder<bool>(
+                valueListenable: vetoPingEvents,
+                builder: (context, veto, _) => FilterChip(
+                  label:
+                      const Text('Veto pings', style: TextStyle(fontSize: 12)),
+                  selected: veto,
+                  onSelected: (v) => vetoPingEvents.value = v,
+                ),
+              ),
+              const SizedBox(width: 4),
               ElevatedButton.icon(
                 icon: const Icon(Icons.send, size: 14),
                 label: const Text('Fire Event', style: TextStyle(fontSize: 12)),
-                onPressed: () {
-                  ref.read(bridgeProvider).publish(
-                        _SamplePingEvent('Manual ping from Event Console'),
-                      );
-                },
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Clear history',
-                icon: const Icon(Icons.delete_outline, size: 20),
-                onPressed: () {
-                  ref.read(eventLogsProvider.notifier).clear();
-                },
+                onPressed: () =>
+                    bridge.publish(_PingEvent('Ping from console')),
               ),
             ],
           ),
         ),
         const Divider(height: 1),
         Expanded(
-          child: eventLogs.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No events recorded yet.\nPerform actions on the Modules tab or click "Fire Event".',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: eventLogs.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final entry = eventLogs[index];
-                    final timeString =
-                        '${entry.timestamp.hour.toString().padLeft(2, '0')}:'
-                        '${entry.timestamp.minute.toString().padLeft(2, '0')}:'
-                        '${entry.timestamp.second.toString().padLeft(2, '0')}';
-
-                    return ListTile(
-                      dense: true,
-                      leading: CircleAvatar(
-                        radius: 14,
-                        backgroundColor: Colors.indigo.shade50,
-                        child: const Icon(Icons.bolt,
-                            size: 16, color: Colors.indigo),
+          child: _ServiceBuilder(
+            service: logService,
+            builder: (context, service) {
+              final logs = (service as EventLogService).history;
+              return logs.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No events yet.\nLogin, add cart items or fire a ping.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey),
                       ),
-                      title: Row(
-                        children: [
-                          Text(
-                            entry.eventName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'monospace',
-                              fontSize: 13,
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: logs.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final entry = logs[index];
+                        final t = entry.timestamp;
+                        final time = '${t.hour.toString().padLeft(2, '0')}:'
+                            '${t.minute.toString().padLeft(2, '0')}:'
+                            '${t.second.toString().padLeft(2, '0')}';
+                        return ListTile(
+                          dense: true,
+                          leading: const CircleAvatar(
+                            radius: 14,
+                            backgroundColor: Colors.indigo,
+                            child:
+                                Icon(Icons.bolt, size: 16, color: Colors.white),
+                          ),
+                          title: Row(children: [
+                            Expanded(
+                              child: Text(entry.eventName,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'monospace',
+                                      fontSize: 13)),
                             ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            timeString,
-                            style: const TextStyle(
-                                fontSize: 11, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                      subtitle: Text(
-                        entry.summary,
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.black87),
-                      ),
+                            Text(time,
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.grey)),
+                          ]),
+                          subtitle: Text(entry.summary,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.black87)),
+                        );
+                      },
                     );
-                  },
-                ),
+            },
+          ),
         ),
       ],
     );
@@ -668,62 +722,232 @@ class _EventConsoleTab extends ConsumerWidget {
 }
 
 // =============================================================================
-// TAB 3: MODULE & MEMORY INSPECTOR (Auto-Dispose & Dynamic Unloading)
+// TAB 3: INSPECTOR � modules lifecycle, metrics, health, scopes, diagnostics
 // =============================================================================
-class _ModuleInspectorTab extends ConsumerWidget {
-  const _ModuleInspectorTab();
+class _InspectorTab extends StatefulWidget {
+  const _InspectorTab({super.key, required this.onServicesChanged});
+  final VoidCallback onServicesChanged;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final activeModules = ref.watch(modulesProvider);
-    final bridge = ref.watch(bridgeProvider);
+  State<_InspectorTab> createState() => _InspectorTabState();
+}
+
+class _InspectorTabState extends State<_InspectorTab> {
+  String _scopeNote = 'No request scope active';
+  String _depEvents = '�';
+
+  ModularBridge get bridge => ModularBridge.I;
+
+  static const _moduleDefs = [
+    ('CoreModule', 'Infrastructure, ApiClient, SessionStore'),
+    ('AnalyticsModule', 'Event bus listener & live console'),
+    ('AuthModule', 'Auth + Lazy-broken profile cycle'),
+    ('HomeModule', 'Event-driven feed'),
+    ('CartModule', 'Shopping cart with auto-clear'),
+  ];
+
+  FeatureModule _moduleFor(String name) => switch (name) {
+        'CoreModule' => CoreModule(),
+        'AnalyticsModule' => AnalyticsModule(),
+        'AuthModule' => AuthModule(),
+        'HomeModule' => HomeModule(),
+        _ => CartModule(),
+      };
+
+  Future<void> _toggleModule(String name) async {
+    final bridge = ModularBridge.I;
+    try {
+      if (bridge.activeModuleNames.contains(name)) {
+        await bridge.unregisterModuleByName(name);
+      } else {
+        await bridge.registerModule(_moduleFor(name));
+      }
+    } on BridgeException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+      return;
+    }
+    widget.onServicesChanged();
+  }
+
+  Future<void> _pushRequestScope() async {
+    final bridge = ModularBridge.I;
+    await bridge.pushNewScopeAsync(
+      scopeName: 'request',
+      init: (b) {
+        // Registrations inside init route to the pushed scope implicitly.
+        b.registerSingleton<UserContext>(
+          UserContext(userId: 'u_42', tenantId: 'acme'),
+        );
+        b.currentScope!
+            .setConfigValue('tenant', 'acme'); // scoped config override
+      },
+    );
+    setState(() => _scopeNote =
+        'tenant=${bridge.configValue<String>('tenant', defaultValue: '�')} '
+            '� scopes=${bridge.activeScopeNames}');
+  }
+
+  Future<void> _popScope() async {
+    await ModularBridge.I.popScope();
+    setState(() => _scopeNote = 'scopes=${ModularBridge.I.activeScopeNames}');
+  }
+
+  Future<void> _showHealthCheck() async {
+    final results = await bridge.checkModuleHealth();
+    if (!mounted) return;
+    final healthy = results.where((r) => r.isHealthy).length;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Health: $healthy/${results.length} healthy'),
+        content: results.isEmpty
+            ? const Text('No modules registered.')
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final r in results)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        r.isHealthy
+                            ? Icons.check_circle_outline
+                            : Icons.cancel_outlined,
+                        color: r.isHealthy ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
+                      title: Text(r.moduleName,
+                          style: const TextStyle(fontSize: 14)),
+                      subtitle: Text(
+                        [
+                          if (r.duration != null)
+                            '${r.duration!.inMilliseconds}ms',
+                          if (r.error != null) '$r.error',
+                        ].join(' � '),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showDiagnostics() async {
+    final report = bridge.diagnosticsReport();
+    if (!mounted) return;
+    final payload = {
+      'isHealthy': report.isHealthy,
+      'registrations': report.registrations.length,
+      'modules': report.moduleNames,
+      'activeScopeNames': report.activeScopeNames,
+      'scopeStack': report.scopeStack,
+      'activeSubscriptionCount': report.activeSubscriptionCount,
+      'pendingAsyncResolutions': report.pendingAsyncResolutions,
+      'issues': report.issues,
+      'metrics': report.metrics,
+    };
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('diagnosticsReport()'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              const JsonEncoder.withIndent('  ').convert(payload),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showDepEvents() async {
+    // dependencyEventHistory: replay last N registration events, then live.
+    final events =
+        await bridge.dependencyEventHistory(count: 8).take(8).toList();
+    if (!mounted) return;
+    setState(() => _depEvents = events
+        .map((e) => '${e.kind.name} ${e.info.key.type}'
+            '${e.scopeName != null ? ' @${e.scopeName}' : ''}')
+        .join('\n'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bridge = ModularBridge.I;
     final metrics = bridge.metrics;
     final hitRatio = (metrics.cacheHitRatio * 100).toStringAsFixed(1);
-
-    final moduleDefinitions = [
-      (
-        'CoreModule',
-        'Infrastructure, ApiClient, LoggingService',
-        () => CoreModule()
-      ),
-      (
-        'AnalyticsModule',
-        'Event bus listener & live console recorder',
-        () => AnalyticsModule()
-      ),
-      (
-        'AuthModule',
-        'Authentication state and login/logout events',
-        () => AuthModule()
-      ),
-      ('HomeModule', 'Decoupled consumer of user events', () => HomeModule()),
-      (
-        'CartModule',
-        'Decoupled shopping cart with auto-clear',
-        () => CartModule()
-      ),
-    ];
+    final activeModules = bridge.activeModuleNames.toSet();
 
     return ListView(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.amber.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.amber.shade300),
-          ),
-          child: const Row(
+        _InfoBanner(
+          text: 'Dynamic module lifecycle: unload disposes dependencies '
+              'and module-owned event subscriptions automatically.',
+        ),
+        const SizedBox(height: 16),
+
+        // Metrics + timing
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.memory, color: Colors.brown),
-              SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Dynamic Module Lifecycle & Auto-Disposal:\n'
-                  'When you unregister a module, ModularBridge instantly disposes all of its '
-                  'registered dependencies and EventBus listeners to eliminate memory leaks.',
-                  style: TextStyle(fontSize: 12, color: Colors.brown),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.monitor_heart_outlined, color: Colors.indigo),
+                    SizedBox(width: 8),
+                    Text('Bridge Diagnostics',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                  ]),
+                  Wrap(spacing: 4, children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.favorite, size: 16),
+                      label: const Text('Health'),
+                      onPressed: _showHealthCheck,
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.bug_report_outlined, size: 16),
+                      label: const Text('Report'),
+                      onPressed: _showDiagnostics,
+                    ),
+                  ]),
+                ],
+              ),
+              const Divider(height: 20),
+              Wrap(spacing: 16, runSpacing: 8, children: [
+                _MetricChip(
+                    label: 'Resolutions', value: '${metrics.totalResolutions}'),
+                _MetricChip(
+                    label: 'Cache Hits', value: '${metrics.totalCacheHits}'),
+                _MetricChip(
+                    label: 'Failures', value: '${metrics.totalFailures}'),
+                _MetricChip(label: 'Hit Ratio', value: '$hitRatio%'),
+              ]),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<String>(
+                valueListenable: lastResolutionTiming,
+                builder: (context, timing, _) => Text(
+                  'last timed resolution: $timing',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ),
             ],
@@ -731,94 +955,10 @@ class _ModuleInspectorTab extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
 
-        // Diagnostics card: live resolution metrics + module health check
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side:
-                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.monitor_heart_outlined,
-                            color: Colors.indigo),
-                        SizedBox(width: 8),
-                        Text(
-                          'Bridge Diagnostics',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                      ],
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.favorite, size: 16),
-                      label: const Text('Health Check'),
-                      onPressed: () => _runHealthCheck(context, ref),
-                    ),
-                  ],
-                ),
-                const Divider(height: 20),
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 8,
-                  children: [
-                    _MetricChip(
-                        label: 'Resolutions',
-                        value: '${metrics.totalResolutions}'),
-                    _MetricChip(
-                        label: 'Cache Hits',
-                        value: '${metrics.totalCacheHits}'),
-                    _MetricChip(
-                        label: 'Failures', value: '${metrics.totalFailures}'),
-                    _MetricChip(label: 'Hit Ratio', value: '$hitRatio%'),
-                  ],
-                ),
-                if (metrics.moduleEntries.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  const Text('Per-module resolutions:',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  ...metrics.moduleEntries.entries.map(
-                    (e) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(e.key,
-                              style: const TextStyle(
-                                  fontSize: 12, fontFamily: 'monospace')),
-                          Text(
-                            '${e.value.resolutions} resolutions • '
-                            '${e.value.cacheHits} hits • '
-                            '${e.value.failures} failures',
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.black54),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        ...moduleDefinitions.map((def) {
-          final (name, description, factory) = def;
+        // Modules
+        ..._moduleDefs.map((def) {
+          final (name, description) = def;
           final isRegistered = activeModules.contains(name);
-
           return Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
@@ -844,97 +984,256 @@ class _ModuleInspectorTab extends ConsumerWidget {
                       isRegistered ? Colors.red : Colors.green.shade800,
                   elevation: 0,
                 ),
-                onPressed: () async {
-                  try {
-                    if (isRegistered) {
-                      await ref
-                          .read(modulesProvider.notifier)
-                          .unloadModule(name);
-                    } else {
-                      await ref
-                          .read(modulesProvider.notifier)
-                          .loadModule(factory());
-                    }
-                  } on BridgeException catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(e.message)),
-                      );
-                    }
-                    return;
-                  }
-                  ref.invalidate(authProvider);
-                  ref.invalidate(cartProvider);
-                  ref.invalidate(homeFeedProvider);
-                },
-                child: Text(isRegistered ? 'Unload Module' : 'Load Module'),
+                onPressed: () => _toggleModule(name),
+                child: Text(isRegistered ? 'Unload' : 'Load'),
               ),
             ),
           );
         }),
-      ],
-    );
-  }
+        const SizedBox(height: 16),
 
-  Future<void> _runHealthCheck(BuildContext context, WidgetRef ref) async {
-    final bridge = ref.read(bridgeProvider);
-    final results = await bridge.checkModuleHealth();
-    if (!context.mounted) return;
-
-    final allHealthy = results.every((r) => r.isHealthy);
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              allHealthy ? Icons.check_circle : Icons.error,
-              color: allHealthy ? Colors.green : Colors.red,
-            ),
-            const SizedBox(width: 8),
-            const Text('Module Health Check'),
-          ],
-        ),
-        content: results.isEmpty
-            ? const Text('No modules are currently registered.')
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final r in results)
-                    ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        r.isHealthy
-                            ? Icons.check_circle_outline
-                            : Icons.cancel_outlined,
-                        color: r.isHealthy ? Colors.green : Colors.red,
-                        size: 20,
-                      ),
-                      title: Text(r.moduleName,
-                          style: const TextStyle(fontSize: 14)),
-                      subtitle: r.error != null
-                          ? Text('$r.error',
-                              style: const TextStyle(fontSize: 12))
-                          : null,
-                    ),
-                ],
+        // Scope stack demo
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.account_tree_outlined, color: Colors.teal),
+                SizedBox(width: 8),
+                Text('Scope stack demo',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ]),
+              const SizedBox(height: 6),
+              const Text(
+                'pushNewScopeAsync registers UserContext inside a '
+                '"request" scope and sets a scoped config override � '
+                'bridge.configValue resolves it through the scope chain.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
+              const Divider(height: 20),
+              Wrap(spacing: 8, children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.push_pin, size: 18),
+                  label: const Text('Push request scope'),
+                  onPressed: _pushRequestScope,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.call_made, size: 18),
+                  label: const Text('Pop scope'),
+                  onPressed: bridge.currentScope == null ? null : _popScope,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.history, size: 18),
+                  label: const Text('DI event history'),
+                  onPressed: _showDepEvents,
+                ),
+              ]),
+              const SizedBox(height: 8),
+              Text(_scopeNote, style: const TextStyle(fontSize: 12)),
+              if (_depEvents != '�')
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(_depEvents,
+                      style: const TextStyle(
+                          fontSize: 11, fontFamily: 'monospace')),
+                ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-/// Small label/value chip used by the Bridge Diagnostics card.
+// =============================================================================
+// TAB 4: CONFIG STUDIO � env hot-switch, config binding, runtime overrides
+// =============================================================================
+class _ConfigStudioTab extends StatefulWidget {
+  const _ConfigStudioTab({super.key});
+
+  @override
+  State<_ConfigStudioTab> createState() => _ConfigStudioTabState();
+}
+
+class _ConfigStudioTabState extends State<_ConfigStudioTab> {
+  StreamSubscription<void>? _configSub;
+  String _apiClientInfo = '�';
+
+  ModularBridge get bridge => ModularBridge.I;
+
+  @override
+  void initState() {
+    super.initState();
+    // Reactive config: rebuild this tab on set/remove/env-switch.
+    _configSub = bridge.config.onChanged.listen((_) => setState(() {}));
+    _refreshApiInfo();
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    super.dispose();
+  }
+
+  void _refreshApiInfo() {
+    final client = bridge.tryGet<ApiClient>();
+    _apiClientInfo = client == null
+        ? 'ApiClient not resolved'
+        : '${client.baseUrl} � ${client.timeout.inSeconds}s';
+  }
+
+  void _switchEnvironment(BridgeEnvironment env) {
+    bridge.config.switchEnvironment(env);
+    // registerConfigBinding already reset ApiClient � just re-resolve.
+    setState(_refreshApiInfo);
+  }
+
+  void _addRuntimeOverride() {
+    bridge.config.set('runtime.flag', 'enabled-${DateTime.now().second}');
+  }
+
+  void _removeAllOverrides() {
+    bridge.config.removeRuntimeOverrides();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final config = bridge.config;
+    final environment = config.environment;
+    _refreshApiInfo();
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Runtime flavor hot-switching',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 4),
+              const Text(
+                'switchEnvironment fires config.onChanged; the '
+                'registerConfigBinding<ApiClient> resets and re-decodes '
+                'automatically � no manual unregister needed.',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 16),
+              SegmentedButton<BridgeEnvironment>(
+                segments: const [
+                  ButtonSegment(
+                      value: BridgeEnvironment.dev,
+                      label: Text('DEV'),
+                      icon: Icon(Icons.developer_mode)),
+                  ButtonSegment(
+                      value: BridgeEnvironment.staging,
+                      label: Text('STAGING'),
+                      icon: Icon(Icons.science)),
+                  ButtonSegment(
+                      value: BridgeEnvironment.prod,
+                      label: Text('PROD'),
+                      icon: Icon(Icons.rocket_launch)),
+                ],
+                selected: {environment},
+                onSelectionChanged: (s) => _switchEnvironment(s.first),
+              ),
+              const SizedBox(height: 12),
+              Text('bound ApiClient � $_apiClientInfo',
+                  style: const TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _card(
+          context,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Expanded(
+                    child: Text('Active config values',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                  ),
+                  Wrap(spacing: 4, children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.add_circle_outline, size: 16),
+                      label: const Text('set()'),
+                      onPressed: _addRuntimeOverride,
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.cleaning_services_outlined,
+                          size: 16),
+                      label: const Text('removeRuntimeOverrides()'),
+                      onPressed: _removeAllOverrides,
+                    ),
+                  ]),
+                ],
+              ),
+              const Divider(height: 20),
+              for (final entry in config.currentValues.entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(entry.key, style: const TextStyle(fontSize: 13)),
+                      Flexible(
+                        child: Text(
+                          entry.value.toString(),
+                          style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// Shared widgets & demo types
+// =============================================================================
+class _InfoBanner extends StatelessWidget {
+  const _InfoBanner({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.indigo.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.indigo.shade200),
+      ),
+      child: Row(children: [
+        const Icon(Icons.info_outline, color: Colors.indigo),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(fontSize: 13, color: Colors.indigo)),
+        ),
+      ]),
+    );
+  }
+}
+
 class _MetricChip extends StatelessWidget {
   const _MetricChip({required this.label, required this.value});
-
   final String label;
   final String value;
 
@@ -951,185 +1250,22 @@ class _MetricChip extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// TAB 4: FLAVOR & CONFIG STUDIO (Runtime Hot-Switch via Riverpod)
-// =============================================================================
-class _ConfigStudioTab extends ConsumerWidget {
-  const _ConfigStudioTab();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final environment = ref.watch(environmentProvider);
-    final config = ref.watch(bridgeProvider).config;
-    // Rebuild whenever any config value changes (set/remove/environment switch).
-    ref.watch(configChangesProvider);
-
-    return ListView(
-      padding: const EdgeInsets.all(16.0),
-      children: [
-        Card(
-          elevation: 0,
-          color: Theme.of(context).colorScheme.primaryContainer.withAlpha(60),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side:
-                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Runtime Flavor Hot-Switching',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Driven through Riverpod EnvironmentNotifier: changing flavor updates '
-                  'all config consumers without restarting the app.',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-                const SizedBox(height: 16),
-                SegmentedButton<BridgeEnvironment>(
-                  segments: const [
-                    ButtonSegment(
-                      value: BridgeEnvironment.dev,
-                      label: Text('DEV'),
-                      icon: Icon(Icons.developer_mode),
-                    ),
-                    ButtonSegment(
-                      value: BridgeEnvironment.staging,
-                      label: Text('STAGING'),
-                      icon: Icon(Icons.science),
-                    ),
-                    ButtonSegment(
-                      value: BridgeEnvironment.prod,
-                      label: Text('PROD'),
-                      icon: Icon(Icons.rocket_launch),
-                    ),
-                  ],
-                  selected: {environment},
-                  onSelectionChanged: (newSelection) {
-                    ref
-                        .read(environmentProvider.notifier)
-                        .switchEnvironment(newSelection.first);
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side:
-                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Type-Safe Config Parameters',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    IconButton(
-                      tooltip: 'Add Custom Key at Runtime',
-                      icon: const Icon(Icons.add_circle_outline,
-                          color: Colors.indigo),
-                      onPressed: () => _showAddKeyDialog(context, ref),
-                    ),
-                  ],
-                ),
-                const Divider(height: 20),
-                ...config.currentValues.entries.map((entry) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          entry.key,
-                          style: const TextStyle(
-                              fontSize: 13, color: Colors.black87),
-                        ),
-                        Text(
-                          entry.value.toString(),
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _showAddKeyDialog(BuildContext context, WidgetRef ref) {
-    final keyController = TextEditingController();
-    final valueController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add / Override Config Key'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: keyController,
-              decoration: const InputDecoration(
-                  labelText: 'Config Key (e.g. promoCode)'),
-            ),
-            TextField(
-              controller: valueController,
-              decoration:
-                  const InputDecoration(labelText: 'Value (e.g. SUMMER2026)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (keyController.text.isNotEmpty) {
-                ref.read(bridgeProvider).config.set(
-                    keyController.text.trim(), valueController.text.trim());
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Sample custom ping event for live console testing.
-final class _SamplePingEvent extends BridgeEvent {
-  _SamplePingEvent(this.message);
+/// Ping event used by the event-console "Fire Event" button � also the
+/// target of the veto interceptor demo.
+final class _PingEvent extends BridgeEvent {
+  _PingEvent(this.message);
   final String message;
 
   @override
-  String toString() => '_SamplePingEvent("$message")';
+  String toString() => '_PingEvent("$message")';
+}
+
+/// Request-scoped context registered inside the pushed "request" scope.
+class UserContext {
+  const UserContext({required this.userId, required this.tenantId});
+  final String userId;
+  final String tenantId;
+
+  @override
+  String toString() => 'UserContext($userId @ $tenantId)';
 }

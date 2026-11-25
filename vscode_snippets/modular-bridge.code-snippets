@@ -1,14 +1,158 @@
 {
-  "mb.allready": {
-    "prefix": "mb.allready",
+  "mb_addEventInterceptor": {
+    "prefix": "mb_addEventInterceptor",
+    "description": "Call addEventInterceptor(BridgeEventInterceptor interceptor)",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.addEventInterceptor(${1:interceptor})"
+    ]
+  },
+  "mb_addResolutionInterceptor": {
+    "prefix": "mb_addResolutionInterceptor",
+    "description": "Call addResolutionInterceptor(BridgeResolutionInterceptor interceptor)",
+    "scope": "dart",
+    "body": [
+      "bridge.addResolutionInterceptor(${1:interceptor})"
+    ]
+  },
+  "mb_allReadySync": {
+    "prefix": "mb_allReadySync",
+    "description": "Call allReadySync({bool ignorePendingAsyncCreation = false})",
+    "scope": "dart",
+    "body": [
+      "bridge.allReadySync()"
+    ]
+  },
+  "mb_allready": {
+    "prefix": "mb_allready",
     "description": "Await all readiness-tracked dependencies",
     "scope": "dart",
     "body": [
       "await bridge.allReady(timeout: const Duration(seconds: ${1:10}));"
     ]
   },
-  "mb.config": {
-    "prefix": "mb.config",
+  "mb_assertAllReadySync": {
+    "prefix": "mb_assertAllReadySync",
+    "description": "Call assertAllReadySync",
+    "scope": "dart",
+    "body": [
+      "bridge.assertAllReadySync()"
+    ]
+  },
+  "mb_assertNoLeaks": {
+    "prefix": "mb_assertNoLeaks",
+    "description": "Call assertNoLeaks",
+    "scope": "dart",
+    "body": [
+      "bridge.assertNoLeaks()"
+    ]
+  },
+  "mb_assertRegistered": {
+    "prefix": "mb_assertRegistered",
+    "description": "Call assertRegistered({String? instanceName})",
+    "scope": "dart",
+    "body": [
+      "bridge.assertRegistered<T>()"
+    ]
+  },
+  "mb_asyncSingleton": {
+    "prefix": "mb_asyncSingleton",
+    "description": "Call asyncSingleton(Future<T> Function() factory, { String? instanceName, bool override = false, void Funct...)",
+    "scope": "dart",
+    "body": [
+      "bridge.asyncSingleton<T>(${1:factory})"
+    ]
+  },
+  "mb_bind": {
+    "prefix": "mb_bind",
+    "description": "Call bind({ required String configKey, required T Function(dynamic value) decoder, dynamic defaul...)",
+    "scope": "dart",
+    "body": [
+      "bridge.bind<T>(configKey: ${1:configKey}, decoder: ${2:decoder})"
+    ]
+  },
+  "mb_call": {
+    "prefix": "mb_call",
+    "description": "Call call({String? instanceName})",
+    "scope": "dart",
+    "body": [
+      "bridge.call<T>()"
+    ]
+  },
+  "mb_callAsync": {
+    "prefix": "mb_callAsync",
+    "description": "Call callAsync({String? instanceName})",
+    "scope": "dart",
+    "body": [
+      "bridge.callAsync<T>()"
+    ]
+  },
+  "mb_cancel": {
+    "prefix": "mb_cancel",
+    "description": "Call cancel",
+    "scope": "dart",
+    "body": [
+      "subscription.cancel()"
+    ]
+  },
+  "mb_cancelSubscriptionsForOwner": {
+    "prefix": "mb_cancelSubscriptionsForOwner",
+    "description": "Call cancelSubscriptionsForOwner(String ownerId)",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.cancelSubscriptionsForOwner(${1:ownerId})"
+    ]
+  },
+  "mb_checkModuleHealth": {
+    "prefix": "mb_checkModuleHealth",
+    "description": "Call checkModuleHealth",
+    "scope": "dart",
+    "body": [
+      "bridge.checkModuleHealth()"
+    ]
+  },
+  "mb_checkScopeNameAvailable": {
+    "prefix": "mb_checkScopeNameAvailable",
+    "description": "Call checkScopeNameAvailable(String? scopeName)",
+    "scope": "dart",
+    "body": [
+      "bridge.checkScopeNameAvailable(${1:scopeName})"
+    ]
+  },
+  "mb_clearEventInterceptors": {
+    "prefix": "mb_clearEventInterceptors",
+    "description": "Call clearEventInterceptors",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.clearEventInterceptors()"
+    ]
+  },
+  "mb_clearReplayHistory": {
+    "prefix": "mb_clearReplayHistory",
+    "description": "Call clearReplayHistory",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.clearReplayHistory()"
+    ]
+  },
+  "mb_clearResolutionInterceptors": {
+    "prefix": "mb_clearResolutionInterceptors",
+    "description": "Call clearResolutionInterceptors",
+    "scope": "dart",
+    "body": [
+      "bridge.clearResolutionInterceptors()"
+    ]
+  },
+  "mb_clearSubscriptions": {
+    "prefix": "mb_clearSubscriptions",
+    "description": "Call clearSubscriptions",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.clearSubscriptions()"
+    ]
+  },
+  "mb_config": {
+    "prefix": "mb_config",
     "description": "BridgeConfig — environments + common values",
     "scope": "dart",
     "body": [
@@ -33,19 +177,27 @@
       "ModularBridge.I.setConfig(config);"
     ]
   },
-  "mb.config.binding": {
-    "prefix": "mb.config.binding",
+  "mb_configValue": {
+    "prefix": "mb_configValue",
+    "description": "Call configValue(String key, {T? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "bridge.configValue<T>(${1:key})"
+    ]
+  },
+  "mb_config_binding": {
+    "prefix": "mb_config_binding",
     "description": "registerConfigBinding — dependency rebuilt on config change",
     "scope": "dart",
     "body": [
-      "bridge.registerConfigBinding<ApiConfig>(",
-      "  configKey: '${1:api}',",
-      "  decoder: (value) => ApiConfig.fromMap(value as Map<String, dynamic>),",
+      "bridge.registerConfigBinding<${1:AppConfig}>(",
+      "  configKey: '${2:api}',",
+      "  decoder: (value) => ${1:AppConfig}.fromMap(value as Map<String, dynamic>),",
       ");"
     ]
   },
-  "mb.config.env": {
-    "prefix": "mb.config.env",
+  "mb_config_env": {
+    "prefix": "mb_config_env",
     "description": "BridgeConfig from a .env file (pure Dart loader)",
     "scope": "dart",
     "body": [
@@ -55,16 +207,16 @@
       ");"
     ]
   },
-  "mb.config.get": {
-    "prefix": "mb.config.get",
+  "mb_config_get": {
+    "prefix": "mb_config_get",
     "description": "Typed config read with default",
     "scope": "dart",
     "body": [
-      "final ${1:String} ${2:value} = config.get${3|String,int,double,bool,Duration,Uri|}('${4:key}'${5:, defaultValue: ${6}});"
+      "final ${1:String} ${2:value} = config.get${3|String,int,double,bool,Duration,Uri|}('${4:key}'${5:, defaultValue: ${6:null}});"
     ]
   },
-  "mb.config.json": {
-    "prefix": "mb.config.json",
+  "mb_config_json": {
+    "prefix": "mb_config_json",
     "description": "BridgeConfig from a JSON asset/string",
     "scope": "dart",
     "body": [
@@ -74,16 +226,128 @@
       ");"
     ]
   },
-  "mb.config.switch": {
-    "prefix": "mb.config.switch",
+  "mb_config_switch": {
+    "prefix": "mb_config_switch",
     "description": "Hot-switch the active environment at runtime",
     "scope": "dart",
     "body": [
       "config.switchEnvironment(BridgeEnvironment.${1|dev,staging,prod|});"
     ]
   },
-  "mb.event": {
-    "prefix": "mb.event",
+  "mb_createChildScope": {
+    "prefix": "mb_createChildScope",
+    "description": "Call createChildScope({String? scopeName})",
+    "scope": "dart",
+    "body": [
+      "scope.createChildScope()"
+    ]
+  },
+  "mb_createIsolated": {
+    "prefix": "mb_createIsolated",
+    "description": "Call ModularBridge.createIsolated({ BridgeConfig? config, BridgeEventBus? eventBus, })",
+    "scope": "dart",
+    "body": [
+      "ModularBridge.createIsolated()"
+    ]
+  },
+  "mb_createScope": {
+    "prefix": "mb_createScope",
+    "description": "Call createScope({String? scopeName})",
+    "scope": "dart",
+    "body": [
+      "bridge.createScope()"
+    ]
+  },
+  "mb_createScopeAsync": {
+    "prefix": "mb_createScopeAsync",
+    "description": "Call createScopeAsync([ FutureOr<void> Function(BridgeScope scope)? init, ])",
+    "scope": "dart",
+    "body": [
+      "bridge.createScopeAsync()"
+    ]
+  },
+  "mb_debugLeakReport": {
+    "prefix": "mb_debugLeakReport",
+    "description": "Call debugLeakReport",
+    "scope": "dart",
+    "body": [
+      "bridge.debugLeakReport()"
+    ]
+  },
+  "mb_dep": {
+    "prefix": "mb_dep",
+    "description": "dep<T>() — DependencyKey shorthand for dependsOn lists",
+    "scope": "dart",
+    "body": [
+      "dep<${1:Service}>()"
+    ]
+  },
+  "mb_dep_named": {
+    "prefix": "mb_dep_named",
+    "description": "dep<T>('name') — named DependencyKey shorthand",
+    "scope": "dart",
+    "body": [
+      "dep<${1:Service}>('${2:name}')"
+    ]
+  },
+  "mb_dependenciesOf": {
+    "prefix": "mb_dependenciesOf",
+    "description": "Call dependenciesOf(DependencyInfo info)",
+    "scope": "dart",
+    "body": [
+      "bridge.dependencyGraph().dependenciesOf(${1:info})"
+    ]
+  },
+  "mb_dependencyEventHistory": {
+    "prefix": "mb_dependencyEventHistory",
+    "description": "Call dependencyEventHistory({int count = 50})",
+    "scope": "dart",
+    "body": [
+      "bridge.dependencyEventHistory()"
+    ]
+  },
+  "mb_dependencyGraph": {
+    "prefix": "mb_dependencyGraph",
+    "description": "Call dependencyGraph",
+    "scope": "dart",
+    "body": [
+      "bridge.dependencyGraph()"
+    ]
+  },
+  "mb_depthOf": {
+    "prefix": "mb_depthOf",
+    "description": "Call depthOf(FeatureModule module)",
+    "scope": "dart",
+    "body": [
+      "bridge.depthOf(${1:module})"
+    ]
+  },
+  "mb_diagnosticsReport": {
+    "prefix": "mb_diagnosticsReport",
+    "description": "Call diagnosticsReport",
+    "scope": "dart",
+    "body": [
+      "bridge.diagnosticsReport()"
+    ]
+  },
+  "mb_dropScope": {
+    "prefix": "mb_dropScope",
+    "description": "Call dropScope(String scopeName)",
+    "scope": "dart",
+    "body": [
+      "bridge.dropScope(${1:scopeName})"
+    ]
+  },
+  "mb_enableDevTools": {
+    "prefix": "mb_enableDevTools",
+    "description": "Call enableDevTools",
+    "scope": "dart",
+    "body": [
+      "bridge.enableDevTools()"
+    ]
+  },
+  "mb_event": {
+    "prefix": "mb_event",
     "description": "BridgeEvent — immutable domain event",
     "scope": "dart",
     "body": [
@@ -94,16 +358,16 @@
       "}"
     ]
   },
-  "mb.event.once": {
-    "prefix": "mb.event.once",
+  "mb_event_once": {
+    "prefix": "mb_event_once",
     "description": "Wait for the next event of type T",
     "scope": "dart",
     "body": [
       "final event = await bridge.eventBus.once<${1:MyEvent}>(timeout: const Duration(seconds: ${2:5}));"
     ]
   },
-  "mb.event.onlatest": {
-    "prefix": "mb.event.onlatest",
+  "mb_event_onlatest": {
+    "prefix": "mb_event_onlatest",
     "description": "Stream that replays the latest event then continues live",
     "scope": "dart",
     "body": [
@@ -112,76 +376,652 @@
       "});"
     ]
   },
-  "mb.event.publish": {
-    "prefix": "mb.event.publish",
+  "mb_event_publish": {
+    "prefix": "mb_event_publish",
     "description": "Publish an event on the bridge event bus",
     "scope": "dart",
     "body": [
-      "bridge.eventBus.publish(${1:MyEvent()}${2});"
+      "bridge.publish(${1:MyEvent()});"
     ]
   },
-  "mb.event.subscribe": {
-    "prefix": "mb.event.subscribe",
+  "mb_event_subscribe": {
+    "prefix": "mb_event_subscribe",
     "description": "Subscribe to an event (managed BridgeSubscription)",
     "scope": "dart",
     "body": [
       "final sub = bridge.eventBus.subscribe<${1:MyEvent}>(${2:(event) {\n    ${3}\n  }}, ownerId: '${4:owner}');"
     ]
   },
-  "mb.get": {
-    "prefix": "mb.get",
+  "mb_findDescriptorFromRoot": {
+    "prefix": "mb_findDescriptorFromRoot",
+    "description": "Call findDescriptorFromRoot(DependencyKey key)",
+    "scope": "dart",
+    "body": [
+      "bridge.findDescriptorFromRoot(${1:key})"
+    ]
+  },
+  "mb_findScope": {
+    "prefix": "mb_findScope",
+    "description": "Call findScope(String scopeName)",
+    "scope": "dart",
+    "body": [
+      "bridge.findScope(${1:scopeName})"
+    ]
+  },
+  "mb_fn_parseEnvFile": {
+    "prefix": "mb_fn_parseEnvFile",
+    "description": "Call parseEnvFile(String source)",
+    "scope": "dart",
+    "body": [
+      "parseEnvFile(${1:source})"
+    ]
+  },
+  "mb_fn_reportBridgeError": {
+    "prefix": "mb_fn_reportBridgeError",
+    "description": "Call reportBridgeError(\n  Object error,\n  StackTrace stackTrace, {\n  String library = 'modular_bridge',\n  String? context,\n})",
+    "scope": "dart",
+    "body": [
+      "reportBridgeError(${1:error}, ${2:stackTrace})"
+    ]
+  },
+  "mb_fromAsset": {
+    "prefix": "mb_fromAsset",
+    "description": "Call fromAsset(String assetPath, { required Future<String> Function(String path) loader, BridgeEnviron...)",
+    "scope": "dart",
+    "body": [
+      "BridgeConfig.fromAsset(${1:assetPath}, loader: ${2:loader})"
+    ]
+  },
+  "mb_fromDescriptor": {
+    "prefix": "mb_fromDescriptor",
+    "description": "Call DependencyInfo.fromDescriptor(DependencyDescriptor<dynamic> d)",
+    "scope": "dart",
+    "body": [
+      "DependencyInfo.fromDescriptor(${1:d})"
+    ]
+  },
+  "mb_fromEnvFile": {
+    "prefix": "mb_fromEnvFile",
+    "description": "Call fromEnvFile(String path, { required Future<String> Function(String path) loader, BridgeEnvironment?...)",
+    "scope": "dart",
+    "body": [
+      "BridgeConfig.fromEnvFile(${1:path}, loader: ${2:loader})"
+    ]
+  },
+  "mb_fromEnvString": {
+    "prefix": "mb_fromEnvString",
+    "description": "Call BridgeConfig.fromEnvString(String source, { BridgeEnvironment? environment, List<String> environmentKeys = envEnvi...)",
+    "scope": "dart",
+    "body": [
+      "BridgeConfig.fromEnvString(${1:source})"
+    ]
+  },
+  "mb_fromJson": {
+    "prefix": "mb_fromJson",
+    "description": "Call BridgeConfig.fromJson(Map<String, dynamic> json, { BridgeEnvironment? environment, })",
+    "scope": "dart",
+    "body": [
+      "BridgeConfig.fromJson(${1:json})"
+    ]
+  },
+  "mb_fromString": {
+    "prefix": "mb_fromString",
+    "description": "Call BridgeConfig.fromString(String source, { BridgeEnvironment? environment, })",
+    "scope": "dart",
+    "body": [
+      "BridgeConfig.fromString(${1:source})"
+    ]
+  },
+  "mb_get": {
+    "prefix": "mb_get",
     "description": "Resolve a dependency synchronously",
     "scope": "dart",
     "body": [
       "final ${1:Service} ${2:service} = bridge.get<${1:Service}>${3|, instanceName: 'name'|}();"
     ]
   },
-  "mb.getall": {
-    "prefix": "mb.getall",
+  "mb_getAllAsync": {
+    "prefix": "mb_getAllAsync",
+    "description": "Call getAllAsync",
+    "scope": "dart",
+    "body": [
+      "bridge.getAllAsync<T>()"
+    ]
+  },
+  "mb_getBool": {
+    "prefix": "mb_getBool",
+    "description": "Call getBool(String key, {bool? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getBool(${1:key})"
+    ]
+  },
+  "mb_getDouble": {
+    "prefix": "mb_getDouble",
+    "description": "Call getDouble(String key, {double? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getDouble(${1:key})"
+    ]
+  },
+  "mb_getDuration": {
+    "prefix": "mb_getDuration",
+    "description": "Call getDuration(String key, {Duration? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getDuration(${1:key})"
+    ]
+  },
+  "mb_getInt": {
+    "prefix": "mb_getInt",
+    "description": "Call getInt(String key, {int? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getInt(${1:key})"
+    ]
+  },
+  "mb_getMap": {
+    "prefix": "mb_getMap",
+    "description": "Call getMap(String key, {Map<String, dynamic>? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getMap(${1:key})"
+    ]
+  },
+  "mb_getModule": {
+    "prefix": "mb_getModule",
+    "description": "Call getModule",
+    "scope": "dart",
+    "body": [
+      "bridge.getModule<M>()"
+    ]
+  },
+  "mb_getParam": {
+    "prefix": "mb_getParam",
+    "description": "Call getParam({ required P1 param1, required P2 param2, String? instanceName, })",
+    "scope": "dart",
+    "body": [
+      "bridge.getParam<T, P1, P2>(param1: ${1:param1}, param2: ${2:param2})"
+    ]
+  },
+  "mb_getParamAsync": {
+    "prefix": "mb_getParamAsync",
+    "description": "Call getParamAsync({ required P1 param1, required P2 param2, String? instanceName, })",
+    "scope": "dart",
+    "body": [
+      "bridge.getParamAsync<T, P1, P2>(param1: ${1:param1}, param2: ${2:param2})"
+    ]
+  },
+  "mb_getSection": {
+    "prefix": "mb_getSection",
+    "description": "Call getSection(String key, T Function(Map<String, dynamic> values) decoder,)",
+    "scope": "dart",
+    "body": [
+      "config.getSection<T>(${1:key}, ${2:decoder})"
+    ]
+  },
+  "mb_getString": {
+    "prefix": "mb_getString",
+    "description": "Call getString(String key, {String? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getString(${1:key})"
+    ]
+  },
+  "mb_getUri": {
+    "prefix": "mb_getUri",
+    "description": "Call getUri(String key, {Uri? defaultValue})",
+    "scope": "dart",
+    "body": [
+      "config.getUri(${1:key})"
+    ]
+  },
+  "mb_get_activeModuleNames": {
+    "prefix": "mb_get_activeModuleNames",
+    "description": "Access activeModuleNames",
+    "scope": "dart",
+    "body": [
+      "bridge.activeModuleNames"
+    ]
+  },
+  "mb_get_activeScopeNames": {
+    "prefix": "mb_get_activeScopeNames",
+    "description": "Access activeScopeNames",
+    "scope": "dart",
+    "body": [
+      "bridge.activeScopeNames"
+    ]
+  },
+  "mb_get_activeSubscriptionCount": {
+    "prefix": "mb_get_activeSubscriptionCount",
+    "description": "Access activeSubscriptionCount",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.activeSubscriptionCount"
+    ]
+  },
+  "mb_get_averageMicros": {
+    "prefix": "mb_get_averageMicros",
+    "description": "Access averageMicros",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.averageMicros"
+    ]
+  },
+  "mb_get_cacheHitRatio": {
+    "prefix": "mb_get_cacheHitRatio",
+    "description": "Access cacheHitRatio",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.cacheHitRatio"
+    ]
+  },
+  "mb_get_configOverrides": {
+    "prefix": "mb_get_configOverrides",
+    "description": "Access configOverrides",
+    "scope": "dart",
+    "body": [
+      "scope.configOverrides"
+    ]
+  },
+  "mb_get_currentScope": {
+    "prefix": "mb_get_currentScope",
+    "description": "Access currentScope",
+    "scope": "dart",
+    "body": [
+      "bridge.currentScope"
+    ]
+  },
+  "mb_get_currentScopeName": {
+    "prefix": "mb_get_currentScopeName",
+    "description": "Access currentScopeName",
+    "scope": "dart",
+    "body": [
+      "bridge.currentScopeName"
+    ]
+  },
+  "mb_get_currentValues": {
+    "prefix": "mb_get_currentValues",
+    "description": "Access currentValues",
+    "scope": "dart",
+    "body": [
+      "config.currentValues"
+    ]
+  },
+  "mb_get_dependencyInfo": {
+    "prefix": "mb_get_dependencyInfo",
+    "description": "Access dependencyInfo",
+    "scope": "dart",
+    "body": [
+      "bridge.dependencyInfo"
+    ]
+  },
+  "mb_get_entries": {
+    "prefix": "mb_get_entries",
+    "description": "Access entries",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.entries"
+    ]
+  },
+  "mb_get_environment": {
+    "prefix": "mb_get_environment",
+    "description": "Access environment",
+    "scope": "dart",
+    "body": [
+      "config.environment"
+    ]
+  },
+  "mb_get_eventBus": {
+    "prefix": "mb_get_eventBus",
+    "description": "Access eventBus",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus"
+    ]
+  },
+  "mb_get_eventInterceptors": {
+    "prefix": "mb_get_eventInterceptors",
+    "description": "Access eventInterceptors",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.eventInterceptors"
+    ]
+  },
+  "mb_get_hasCycles": {
+    "prefix": "mb_get_hasCycles",
+    "description": "Access hasCycles",
+    "scope": "dart",
+    "body": [
+      "bridge.dependencyGraph().hasCycles"
+    ]
+  },
+  "mb_get_instance": {
+    "prefix": "mb_get_instance",
+    "description": "Access instance",
+    "scope": "dart",
+    "body": [
+      "ModularBridge.instance"
+    ]
+  },
+  "mb_get_isCanceled": {
+    "prefix": "mb_get_isCanceled",
+    "description": "Access isCanceled",
+    "scope": "dart",
+    "body": [
+      "subscription.isCanceled"
+    ]
+  },
+  "mb_get_isDev": {
+    "prefix": "mb_get_isDev",
+    "description": "Access isDev",
+    "scope": "dart",
+    "body": [
+      "environment.isDev"
+    ]
+  },
+  "mb_get_isDisposed": {
+    "prefix": "mb_get_isDisposed",
+    "description": "Access isDisposed",
+    "scope": "dart",
+    "body": [
+      "bridge.isDisposed"
+    ]
+  },
+  "mb_get_isFinal": {
+    "prefix": "mb_get_isFinal",
+    "description": "Access isFinal",
+    "scope": "dart",
+    "body": [
+      "scope.isFinal"
+    ]
+  },
+  "mb_get_isHealthy": {
+    "prefix": "mb_get_isHealthy",
+    "description": "Access isHealthy",
+    "scope": "dart",
+    "body": [
+      "bridge.diagnosticsReport().isHealthy"
+    ]
+  },
+  "mb_get_isPaused": {
+    "prefix": "mb_get_isPaused",
+    "description": "Access isPaused",
+    "scope": "dart",
+    "body": [
+      "subscription.isPaused"
+    ]
+  },
+  "mb_get_isProd": {
+    "prefix": "mb_get_isProd",
+    "description": "Access isProd",
+    "scope": "dart",
+    "body": [
+      "environment.isProd"
+    ]
+  },
+  "mb_get_isStaging": {
+    "prefix": "mb_get_isStaging",
+    "description": "Access isStaging",
+    "scope": "dart",
+    "body": [
+      "environment.isStaging"
+    ]
+  },
+  "mb_get_moduleEntries": {
+    "prefix": "mb_get_moduleEntries",
+    "description": "Access moduleEntries",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.moduleEntries"
+    ]
+  },
+  "mb_get_onChanged": {
+    "prefix": "mb_get_onChanged",
+    "description": "Access onChanged",
+    "scope": "dart",
+    "body": [
+      "config.onChanged"
+    ]
+  },
+  "mb_get_onConfigChanged": {
+    "prefix": "mb_get_onConfigChanged",
+    "description": "Access onConfigChanged",
+    "scope": "dart",
+    "body": [
+      "bridge.onConfigChanged"
+    ]
+  },
+  "mb_get_onDependencyEvents": {
+    "prefix": "mb_get_onDependencyEvents",
+    "description": "Access onDependencyEvents",
+    "scope": "dart",
+    "body": [
+      "bridge.onDependencyEvents"
+    ]
+  },
+  "mb_get_onEnvironmentChanged": {
+    "prefix": "mb_get_onEnvironmentChanged",
+    "description": "Access onEnvironmentChanged",
+    "scope": "dart",
+    "body": [
+      "config.onEnvironmentChanged"
+    ]
+  },
+  "mb_get_parentScope": {
+    "prefix": "mb_get_parentScope",
+    "description": "Access parentScope",
+    "scope": "dart",
+    "body": [
+      "scope.parentScope"
+    ]
+  },
+  "mb_get_pendingReadinessKeys": {
+    "prefix": "mb_get_pendingReadinessKeys",
+    "description": "Access pendingReadinessKeys",
+    "scope": "dart",
+    "body": [
+      "bridge.pendingReadinessKeys"
+    ]
+  },
+  "mb_get_publishCounts": {
+    "prefix": "mb_get_publishCounts",
+    "description": "Access publishCounts",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.publishCounts"
+    ]
+  },
+  "mb_get_registeredDependencies": {
+    "prefix": "mb_get_registeredDependencies",
+    "description": "Access registeredDependencies",
+    "scope": "dart",
+    "body": [
+      "bridge.registeredDependencies"
+    ]
+  },
+  "mb_get_resolutionInterceptors": {
+    "prefix": "mb_get_resolutionInterceptors",
+    "description": "Access resolutionInterceptors",
+    "scope": "dart",
+    "body": [
+      "bridge.resolutionInterceptors"
+    ]
+  },
+  "mb_get_totalCacheHits": {
+    "prefix": "mb_get_totalCacheHits",
+    "description": "Access totalCacheHits",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.totalCacheHits"
+    ]
+  },
+  "mb_get_totalFailures": {
+    "prefix": "mb_get_totalFailures",
+    "description": "Access totalFailures",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.totalFailures"
+    ]
+  },
+  "mb_get_totalPublished": {
+    "prefix": "mb_get_totalPublished",
+    "description": "Access totalPublished",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.totalPublished"
+    ]
+  },
+  "mb_get_totalResolutions": {
+    "prefix": "mb_get_totalResolutions",
+    "description": "Access totalResolutions",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.totalResolutions"
+    ]
+  },
+  "mb_get_value": {
+    "prefix": "mb_get_value",
+    "description": "Access value",
+    "scope": "dart",
+    "body": [
+      "lazy.value"
+    ]
+  },
+  "mb_getall": {
+    "prefix": "mb_getall",
     "description": "Resolve every registration of type T (incl. named)",
     "scope": "dart",
     "body": [
       "final all = bridge.getAll<${1:Service}>();"
     ]
   },
-  "mb.getasync": {
-    "prefix": "mb.getasync",
+  "mb_getasync": {
+    "prefix": "mb_getasync",
     "description": "Resolve a dependency asynchronously",
     "scope": "dart",
     "body": [
       "final ${1:Service} ${2:service} = await bridge.getAsync<${1:Service}>();"
     ]
   },
-  "mb.healthcheck": {
-    "prefix": "mb.healthcheck",
+  "mb_hasConfigOverride": {
+    "prefix": "mb_hasConfigOverride",
+    "description": "Call hasConfigOverride(String key)",
+    "scope": "dart",
+    "body": [
+      "scope.hasConfigOverride(${1:key})"
+    ]
+  },
+  "mb_hasKey": {
+    "prefix": "mb_hasKey",
+    "description": "Call hasKey(String key)",
+    "scope": "dart",
+    "body": [
+      "config.hasKey(${1:key})"
+    ]
+  },
+  "mb_hasListeners": {
+    "prefix": "mb_hasListeners",
+    "description": "Call hasListeners",
+    "scope": "dart",
+    "body": [
+      "bridge.hasListeners<T>()"
+    ]
+  },
+  "mb_hasLocal": {
+    "prefix": "mb_hasLocal",
+    "description": "Call hasLocal(DependencyKey key)",
+    "scope": "dart",
+    "body": [
+      "scope.hasLocal(${1:key})"
+    ]
+  },
+  "mb_healthcheck": {
+    "prefix": "mb_healthcheck",
     "description": "Run health checks on all registered modules",
     "scope": "dart",
     "body": [
       "final results = await bridge.checkModuleHealth();",
       "for (final r in results.where((r) => !r.isHealthy)) {",
       "  reportBridgeError(r.error ?? StateError('unhealthy'), StackTrace.current,",
-      "    context: 'Module ${r.moduleName} unhealthy');",
+      "    context: 'Module \\${r.moduleName} unhealthy');",
       "}"
     ]
   },
-  "mb.interceptor": {
-    "prefix": "mb.interceptor",
+  "mb_history": {
+    "prefix": "mb_history",
+    "description": "Call history",
+    "scope": "dart",
+    "body": [
+      "bridge.history<T>()"
+    ]
+  },
+  "mb_interceptor": {
+    "prefix": "mb_interceptor",
     "description": "Resolution interceptor — timing/logging around get<T>()",
     "scope": "dart",
     "body": [
       "bridge.addResolutionInterceptor(",
       "  (request, next) {",
       "    final sw = Stopwatch()..start();",
-      "    developer.log('Resolving ${request.type}', name: 'modular_bridge');",
+      "    developer.log('Resolving \\${request.type}', name: 'modular_bridge');",
       "    final result = next();",
-      "    developer.log('Resolved in ${sw.elapsedMilliseconds}ms', name: 'modular_bridge');",
+      "    developer.log('Resolved in \\${sw.elapsedMilliseconds}ms', name: 'modular_bridge');",
       "    return result;",
       "  },",
       ");"
     ]
   },
-  "mb.isolated": {
-    "prefix": "mb.isolated",
+  "mb_isModuleRegistered": {
+    "prefix": "mb_isModuleRegistered",
+    "description": "Call isModuleRegistered",
+    "scope": "dart",
+    "body": [
+      "bridge.isModuleRegistered<M>()"
+    ]
+  },
+  "mb_isReady": {
+    "prefix": "mb_isReady",
+    "description": "Call isReady({ String? instanceName, Duration? timeout, })",
+    "scope": "dart",
+    "body": [
+      "bridge.isReady<T>()"
+    ]
+  },
+  "mb_isReadySync": {
+    "prefix": "mb_isReadySync",
+    "description": "Call isReadySync({String? instanceName})",
+    "scope": "dart",
+    "body": [
+      "bridge.isReadySync<T>()"
+    ]
+  },
+  "mb_isRegistered": {
+    "prefix": "mb_isRegistered",
+    "description": "Call isRegistered({String? instanceName})",
+    "scope": "dart",
+    "body": [
+      "bridge.isRegistered<T>()"
+    ]
+  },
+  "mb_isRegisteredFromRoot": {
+    "prefix": "mb_isRegisteredFromRoot",
+    "description": "Call isRegisteredFromRoot({String? instanceName})",
+    "scope": "dart",
+    "body": [
+      "bridge.isRegisteredFromRoot<T>()"
+    ]
+  },
+  "mb_isScopeActive": {
+    "prefix": "mb_isScopeActive",
+    "description": "Call isScopeActive(String scopeName)",
+    "scope": "dart",
+    "body": [
+      "bridge.isScopeActive(${1:scopeName})"
+    ]
+  },
+  "mb_isolated": {
+    "prefix": "mb_isolated",
     "description": "Create an isolated bridge for tests",
     "scope": "dart",
     "body": [
@@ -190,8 +1030,50 @@
       ");"
     ]
   },
-  "mb.module": {
-    "prefix": "mb.module",
+  "mb_lastEvent": {
+    "prefix": "mb_lastEvent",
+    "description": "Call lastEvent",
+    "scope": "dart",
+    "body": [
+      "bridge.lastEvent<T>()"
+    ]
+  },
+  "mb_lazy": {
+    "prefix": "mb_lazy",
+    "description": "Lazy<T> — deferred dependency for circular deps",
+    "scope": "dart",
+    "body": [
+      "final lazy = bridge.lazy<${1:Service}>();",
+      "final value = lazy.value; // or: await lazy.resolveAsync()"
+    ]
+  },
+  "mb_lazySingleton": {
+    "prefix": "mb_lazySingleton",
+    "description": "Call lazySingleton(T Function() factory, { String? instanceName, bool override = false, void Function(T in...)",
+    "scope": "dart",
+    "body": [
+      "bridge.lazySingleton<T>(${1:factory})"
+    ]
+  },
+  "mb_lazy_scoped": {
+    "prefix": "mb_lazy_scoped",
+    "description": "Lazy<T> bound to a BridgeScope hierarchy",
+    "scope": "dart",
+    "body": [
+      "final lazy = scope.lazy<${1:Service}>();",
+      "final value = lazy.value;"
+    ]
+  },
+  "mb_logging": {
+    "prefix": "mb_logging",
+    "description": "Call logging({ void Function(String message)? log, })",
+    "scope": "dart",
+    "body": [
+      "BridgeInterceptors.logging()"
+    ]
+  },
+  "mb_module": {
+    "prefix": "mb_module",
     "description": "FeatureModule — full module skeleton",
     "scope": "dart",
     "body": [
@@ -222,8 +1104,32 @@
       "}"
     ]
   },
-  "mb.module.dispose": {
-    "prefix": "mb.module.dispose",
+  "mb_moduleDependents": {
+    "prefix": "mb_moduleDependents",
+    "description": "Call moduleDependents(Type moduleType)",
+    "scope": "dart",
+    "body": [
+      "bridge.moduleDependents(${1:moduleType})"
+    ]
+  },
+  "mb_module_core": {
+    "prefix": "mb_module_core",
+    "description": "CoreModule — base services module skeleton",
+    "scope": "dart",
+    "body": [
+      "final class CoreModule extends FeatureModule {",
+      "  @override",
+      "  String get name => 'CoreModule';",
+      "",
+      "  @override",
+      "  FutureOr<void> registerDependencies(ModularBridge bridge) async {",
+      "    bridge.registerLazySingleton<${1:AuthService}>(() => ${1:AuthService}());",
+      "  }",
+      "}"
+    ]
+  },
+  "mb_module_dispose": {
+    "prefix": "mb_module_dispose",
     "description": "FeatureModule.dispose — teardown hook",
     "scope": "dart",
     "body": [
@@ -235,8 +1141,29 @@
       "}"
     ]
   },
-  "mb.module.registerdeps": {
-    "prefix": "mb.module.registerdeps",
+  "mb_module_environments": {
+    "prefix": "mb_module_environments",
+    "description": "FeatureModule.environments — env allow-list",
+    "scope": "dart",
+    "body": [
+      "@override",
+      "List<BridgeEnvironment>? get environments =>",
+      "    const [BridgeEnvironment.dev, BridgeEnvironment.staging];"
+    ]
+  },
+  "mb_module_healthcheck": {
+    "prefix": "mb_module_healthcheck",
+    "description": "FeatureModule.healthCheck — module health probe",
+    "scope": "dart",
+    "body": [
+      "@override",
+      "Future<bool> healthCheck(ModularBridge bridge) async {",
+      "  ${1:return true;}",
+      "}"
+    ]
+  },
+  "mb_module_registerdeps": {
+    "prefix": "mb_module_registerdeps",
     "description": "Module.registerDependencies — lazy singleton registration",
     "scope": "dart",
     "body": [
@@ -246,8 +1173,8 @@
       ");"
     ]
   },
-  "mb.module.subscribe": {
-    "prefix": "mb.module.subscribe",
+  "mb_module_subscribe": {
+    "prefix": "mb_module_subscribe",
     "description": "Module.subscribe — event subscription bound to module lifetime",
     "scope": "dart",
     "body": [
@@ -256,8 +1183,19 @@
       "});"
     ]
   },
-  "mb.modulesready": {
-    "prefix": "mb.modulesready",
+  "mb_module_warmup": {
+    "prefix": "mb_module_warmup",
+    "description": "FeatureModule.warmup — hook after owned deps resolve",
+    "scope": "dart",
+    "body": [
+      "@override",
+      "void warmup(ModularBridge bridge) {",
+      "  ${1}",
+      "}"
+    ]
+  },
+  "mb_modulesready": {
+    "prefix": "mb_modulesready",
     "description": "onModulesReady — run code after all modules init",
     "scope": "dart",
     "body": [
@@ -266,16 +1204,475 @@
       "});"
     ]
   },
-  "mb.override": {
-    "prefix": "mb.override",
+  "mb_new_BridgeAsyncDependencyException": {
+    "prefix": "mb_new_BridgeAsyncDependencyException",
+    "description": "Instantiate BridgeAsyncDependencyException",
+    "scope": "dart",
+    "body": [
+      "BridgeAsyncDependencyException(${1:type})"
+    ]
+  },
+  "mb_new_BridgeAsyncInterceptorException": {
+    "prefix": "mb_new_BridgeAsyncInterceptorException",
+    "description": "Instantiate BridgeAsyncInterceptorException",
+    "scope": "dart",
+    "body": [
+      "BridgeAsyncInterceptorException(${1:type})"
+    ]
+  },
+  "mb_new_BridgeCircularDependencyException": {
+    "prefix": "mb_new_BridgeCircularDependencyException",
+    "description": "Instantiate BridgeCircularDependencyException",
+    "scope": "dart",
+    "body": [
+      "BridgeCircularDependencyException(${1:type}, ${2:resolutionChain})"
+    ]
+  },
+  "mb_new_BridgeConfig": {
+    "prefix": "mb_new_BridgeConfig",
+    "description": "Instantiate BridgeConfig",
+    "scope": "dart",
+    "body": [
+      "BridgeConfig(environment: ${1:environment})"
+    ]
+  },
+  "mb_new_BridgeConfigKeyNotFoundException": {
+    "prefix": "mb_new_BridgeConfigKeyNotFoundException",
+    "description": "Instantiate BridgeConfigKeyNotFoundException",
+    "scope": "dart",
+    "body": [
+      "BridgeConfigKeyNotFoundException(${1:key})"
+    ]
+  },
+  "mb_new_BridgeConfigTypeMismatchException": {
+    "prefix": "mb_new_BridgeConfigTypeMismatchException",
+    "description": "Instantiate BridgeConfigTypeMismatchException",
+    "scope": "dart",
+    "body": [
+      "BridgeConfigTypeMismatchException(key: ${1:key}, expectedType: ${2:expectedType}, actualType: ${3:actualType})"
+    ]
+  },
+  "mb_new_BridgeDependencyAlreadyRegisteredException": {
+    "prefix": "mb_new_BridgeDependencyAlreadyRegisteredException",
+    "description": "Instantiate BridgeDependencyAlreadyRegisteredException",
+    "scope": "dart",
+    "body": [
+      "BridgeDependencyAlreadyRegisteredException(${1:type})"
+    ]
+  },
+  "mb_new_BridgeDependencyGraph": {
+    "prefix": "mb_new_BridgeDependencyGraph",
+    "description": "Instantiate BridgeDependencyGraph",
+    "scope": "dart",
+    "body": [
+      "BridgeDependencyGraph(nodes: ${1:nodes}, edges: ${2:edges}, cycles: ${3:cycles})"
+    ]
+  },
+  "mb_new_BridgeDependencyNotFoundException": {
+    "prefix": "mb_new_BridgeDependencyNotFoundException",
+    "description": "Instantiate BridgeDependencyNotFoundException",
+    "scope": "dart",
+    "body": [
+      "BridgeDependencyNotFoundException(${1:type})"
+    ]
+  },
+  "mb_new_BridgeDiagnosticsReport": {
+    "prefix": "mb_new_BridgeDiagnosticsReport",
+    "description": "Instantiate BridgeDiagnosticsReport",
+    "scope": "dart",
+    "body": [
+      "BridgeDiagnosticsReport(registrations: ${1:registrations}, moduleNames: ${2:moduleNames}, activeScopeNames: ${3:activeScopeNames}, scopeStack: ${4:scopeStack}, activeSubscriptionCount: ${5:activeSubscriptionCount}, pendingAsyncResolutions: ${6:pendingAsyncResolutions}, issues: ${7:issues}, metrics: ${8:metrics})"
+    ]
+  },
+  "mb_new_BridgeErrorReport": {
+    "prefix": "mb_new_BridgeErrorReport",
+    "description": "Instantiate BridgeErrorReport",
+    "scope": "dart",
+    "body": [
+      "BridgeErrorReport(exception: ${1:exception})"
+    ]
+  },
+  "mb_new_BridgeEventBus": {
+    "prefix": "mb_new_BridgeEventBus",
+    "description": "Instantiate BridgeEventBus",
+    "scope": "dart",
+    "body": [
+      "BridgeEventBus()"
+    ]
+  },
+  "mb_new_BridgeModuleAlreadyRegisteredException": {
+    "prefix": "mb_new_BridgeModuleAlreadyRegisteredException",
+    "description": "Instantiate BridgeModuleAlreadyRegisteredException",
+    "scope": "dart",
+    "body": [
+      "BridgeModuleAlreadyRegisteredException(${1:moduleName})"
+    ]
+  },
+  "mb_new_BridgeModuleInUseException": {
+    "prefix": "mb_new_BridgeModuleInUseException",
+    "description": "Instantiate BridgeModuleInUseException",
+    "scope": "dart",
+    "body": [
+      "BridgeModuleInUseException(moduleName: ${1:moduleName}, dependentModules: ${2:dependentModules})"
+    ]
+  },
+  "mb_new_BridgeModuleMissingDependencyException": {
+    "prefix": "mb_new_BridgeModuleMissingDependencyException",
+    "description": "Instantiate BridgeModuleMissingDependencyException",
+    "scope": "dart",
+    "body": [
+      "BridgeModuleMissingDependencyException(moduleName: ${1:moduleName}, missingDependency: ${2:missingDependency})"
+    ]
+  },
+  "mb_new_BridgeModuleNotFoundException": {
+    "prefix": "mb_new_BridgeModuleNotFoundException",
+    "description": "Instantiate BridgeModuleNotFoundException",
+    "scope": "dart",
+    "body": [
+      "BridgeModuleNotFoundException(${1:moduleName})"
+    ]
+  },
+  "mb_new_BridgeResolutionRequest": {
+    "prefix": "mb_new_BridgeResolutionRequest",
+    "description": "Instantiate BridgeResolutionRequest",
+    "scope": "dart",
+    "body": [
+      "BridgeResolutionRequest(bridge: ${1:bridge}, type: ${2:type}, isAsync: ${3:isAsync})"
+    ]
+  },
+  "mb_new_BridgeResolutionTiming": {
+    "prefix": "mb_new_BridgeResolutionTiming",
+    "description": "Instantiate BridgeResolutionTiming",
+    "scope": "dart",
+    "body": [
+      "BridgeResolutionTiming(request: ${1:request}, elapsed: ${2:elapsed}, succeeded: ${3:succeeded})"
+    ]
+  },
+  "mb_new_BridgeRetryPolicy": {
+    "prefix": "mb_new_BridgeRetryPolicy",
+    "description": "Instantiate BridgeRetryPolicy",
+    "scope": "dart",
+    "body": [
+      "BridgeRetryPolicy()"
+    ]
+  },
+  "mb_new_BridgeScopeNotFoundException": {
+    "prefix": "mb_new_BridgeScopeNotFoundException",
+    "description": "Instantiate BridgeScopeNotFoundException",
+    "scope": "dart",
+    "body": [
+      "BridgeScopeNotFoundException(${1:scopeName})"
+    ]
+  },
+  "mb_new_BridgeWaitingTimeOutException": {
+    "prefix": "mb_new_BridgeWaitingTimeOutException",
+    "description": "Instantiate BridgeWaitingTimeOutException",
+    "scope": "dart",
+    "body": [
+      "BridgeWaitingTimeOutException(duration: ${1:duration}, pending: ${2:pending}, ready: ${3:ready})"
+    ]
+  },
+  "mb_new_DependencyEdge": {
+    "prefix": "mb_new_DependencyEdge",
+    "description": "Instantiate DependencyEdge",
+    "scope": "dart",
+    "body": [
+      "DependencyEdge(from: ${1:from}, to: ${2:to})"
+    ]
+  },
+  "mb_new_DependencyInfo": {
+    "prefix": "mb_new_DependencyInfo",
+    "description": "Instantiate DependencyInfo",
+    "scope": "dart",
+    "body": [
+      "DependencyInfo(key: ${1:key}, lifecycle: ${2:lifecycle}, registrationIndex: ${3:registrationIndex}, isReady: ${4:isReady}, hasInstance: ${5:hasInstance}, hasAsyncResolution: ${6:hasAsyncResolution}, signalsReady: ${7:signalsReady}, dependsOn: ${8:dependsOn})"
+    ]
+  },
+  "mb_new_DependencyMetricEntry": {
+    "prefix": "mb_new_DependencyMetricEntry",
+    "description": "Instantiate DependencyMetricEntry",
+    "scope": "dart",
+    "body": [
+      "DependencyMetricEntry(resolutions: ${1:resolutions}, cacheHits: ${2:cacheHits}, failures: ${3:failures}, totalMicros: ${4:totalMicros}, maxMicros: ${5:maxMicros})"
+    ]
+  },
+  "mb_new_DependencyMetrics": {
+    "prefix": "mb_new_DependencyMetrics",
+    "description": "Instantiate DependencyMetrics",
+    "scope": "dart",
+    "body": [
+      "DependencyMetrics()"
+    ]
+  },
+  "mb_new_DeveloperLogBridgeErrorReporter": {
+    "prefix": "mb_new_DeveloperLogBridgeErrorReporter",
+    "description": "Instantiate DeveloperLogBridgeErrorReporter",
+    "scope": "dart",
+    "body": [
+      "DeveloperLogBridgeErrorReporter()"
+    ]
+  },
+  "mb_new_Lazy": {
+    "prefix": "mb_new_Lazy",
+    "description": "Instantiate Lazy",
+    "scope": "dart",
+    "body": [
+      "Lazy(${1:bridge})"
+    ]
+  },
+  "mb_new_ModularBridge": {
+    "prefix": "mb_new_ModularBridge",
+    "description": "Instantiate ModularBridge",
+    "scope": "dart",
+    "body": [
+      "ModularBridge()"
+    ]
+  },
+  "mb_nodeId": {
+    "prefix": "mb_nodeId",
+    "description": "Call nodeId(DependencyInfo info)",
+    "scope": "dart",
+    "body": [
+      "BridgeDependencyGraph.nodeId(${1:info})"
+    ]
+  },
+  "mb_on": {
+    "prefix": "mb_on",
+    "description": "Call on",
+    "scope": "dart",
+    "body": [
+      "bridge.on<T>()"
+    ]
+  },
+  "mb_onModulesReady": {
+    "prefix": "mb_onModulesReady",
+    "description": "Call onModulesReady(FutureOr<void> Function(ModularBridge bridge) callback)",
+    "scope": "dart",
+    "body": [
+      "bridge.onModulesReady(${1:callback})"
+    ]
+  },
+  "mb_override": {
+    "prefix": "mb_override",
     "description": "1-line mock override for tests",
     "scope": "dart",
     "body": [
       "bridge.override<${1:Service}>(${2:mockService}${3:, instanceName: 'name'});"
     ]
   },
-  "mb.register.async": {
-    "prefix": "mb.register.async",
+  "mb_overrideAsync": {
+    "prefix": "mb_overrideAsync",
+    "description": "Call overrideAsync(Future<T> Function() factory, { String? instanceName, })",
+    "scope": "dart",
+    "body": [
+      "bridge.overrideAsync<T>(${1:factory})"
+    ]
+  },
+  "mb_overrideFactory": {
+    "prefix": "mb_overrideFactory",
+    "description": "Call overrideFactory(T Function() factory, { String? instanceName, })",
+    "scope": "dart",
+    "body": [
+      "bridge.overrideFactory<T>(${1:factory})"
+    ]
+  },
+  "mb_pause": {
+    "prefix": "mb_pause",
+    "description": "Call pause([Future<void>? resumeSignal])",
+    "scope": "dart",
+    "body": [
+      "subscription.pause()"
+    ]
+  },
+  "mb_popScope": {
+    "prefix": "mb_popScope",
+    "description": "Call popScope",
+    "scope": "dart",
+    "body": [
+      "bridge.popScope()"
+    ]
+  },
+  "mb_popScopesTill": {
+    "prefix": "mb_popScopesTill",
+    "description": "Call popScopesTill(String name, {bool inclusive = true})",
+    "scope": "dart",
+    "body": [
+      "bridge.popScopesTill(${1:name})"
+    ]
+  },
+  "mb_pushNewScope": {
+    "prefix": "mb_pushNewScope",
+    "description": "Call pushNewScope({ String? scopeName, void Function(ModularBridge bridge)? init, FutureOr<void> Function...)",
+    "scope": "dart",
+    "body": [
+      "bridge.pushNewScope()"
+    ]
+  },
+  "mb_pushNewScopeAsync": {
+    "prefix": "mb_pushNewScopeAsync",
+    "description": "Call pushNewScopeAsync({ String? scopeName, FutureOr<void> Function(ModularBridge bridge)? init, FutureOr<void...)",
+    "scope": "dart",
+    "body": [
+      "bridge.pushNewScopeAsync()"
+    ]
+  },
+  "mb_quickstart": {
+    "prefix": "mb_quickstart",
+    "description": "Minimal app bootstrap — config + modules + runApp",
+    "scope": "dart",
+    "body": [
+      "Future<void> main() async {",
+      "  WidgetsFlutterBinding.ensureInitialized();",
+      "",
+      "  final bridge = ModularBridge.I;",
+      "  bridge.setConfig(await BridgeConfig.fromAsset(",
+      "    'assets/config.json',",
+      "    loader: rootBundle.loadString,",
+      "  ));",
+      "  await bridge.registerModules([CoreModule(), AuthModule()]);",
+      "",
+      "  runApp(const MyApp());",
+      "}"
+    ]
+  },
+  "mb_record": {
+    "prefix": "mb_record",
+    "description": "Call record(String key, { required int elapsedMicros, required bool cacheHit, required bool failed,...)",
+    "scope": "dart",
+    "body": [
+      "bridge.metrics.record(${1:key}, elapsedMicros: ${2:elapsedMicros}, cacheHit: ${3:cacheHit}, failed: ${4:failed})"
+    ]
+  },
+  "mb_registerAsyncSingleton": {
+    "prefix": "mb_registerAsyncSingleton",
+    "description": "Call registerAsyncSingleton(Future<T> Function() factory, { String? instanceName, bool override = false, void Funct...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerAsyncSingleton<T>(${1:factory})"
+    ]
+  },
+  "mb_registerCachedFactoryParam": {
+    "prefix": "mb_registerCachedFactoryParam",
+    "description": "Call registerCachedFactoryParam(T Function(P1 param1, P2 param2) factory, { String? instanceName, bool override = false...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerCachedFactoryParam<T, P1, P2>(${1:factory})"
+    ]
+  },
+  "mb_registerCachedFactoryParamAsync": {
+    "prefix": "mb_registerCachedFactoryParamAsync",
+    "description": "Call registerCachedFactoryParamAsync(Future<T> Function(P1 param1, P2 param2) factory, { String? instanceName, bool override...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerCachedFactoryParamAsync<T, P1, P2>(${1:factory})"
+    ]
+  },
+  "mb_registerConfigBinding": {
+    "prefix": "mb_registerConfigBinding",
+    "description": "Call registerConfigBinding({ required String configKey, required T Function(dynamic value) decoder, dynamic defaul...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerConfigBinding<T>(configKey: ${1:configKey}, decoder: ${2:decoder})"
+    ]
+  },
+  "mb_registerFactory": {
+    "prefix": "mb_registerFactory",
+    "description": "Call registerFactory(T Function() factory, { String? instanceName, bool override = false, Iterable<Dependenc...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerFactory<T>(${1:factory})"
+    ]
+  },
+  "mb_registerFactoryAsync": {
+    "prefix": "mb_registerFactoryAsync",
+    "description": "Call registerFactoryAsync(Future<T> Function() factory, { String? instanceName, bool override = false, Iterable<D...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerFactoryAsync<T>(${1:factory})"
+    ]
+  },
+  "mb_registerFactoryParam": {
+    "prefix": "mb_registerFactoryParam",
+    "description": "Call registerFactoryParam(T Function(P1 param1, P2 param2) factory, { String? instanceName, bool override = false...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerFactoryParam<T, P1, P2>(${1:factory})"
+    ]
+  },
+  "mb_registerFactoryParamAsync": {
+    "prefix": "mb_registerFactoryParamAsync",
+    "description": "Call registerFactoryParamAsync(Future<T> Function(P1 param1, P2 param2) factory, { String? instanceName, bool override...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerFactoryParamAsync<T, P1, P2>(${1:factory})"
+    ]
+  },
+  "mb_registerLazySingleton": {
+    "prefix": "mb_registerLazySingleton",
+    "description": "Call registerLazySingleton(T Function() factory, { String? instanceName, bool override = false, void Function(T in...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerLazySingleton<T>(${1:factory})"
+    ]
+  },
+  "mb_registerLazySingletonAsync": {
+    "prefix": "mb_registerLazySingletonAsync",
+    "description": "Call registerLazySingletonAsync(Future<T> Function() factory, { String? instanceName, bool override = false, void Funct...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerLazySingletonAsync<T>(${1:factory})"
+    ]
+  },
+  "mb_registerModule": {
+    "prefix": "mb_registerModule",
+    "description": "Call registerModule(FeatureModule module, { bool checkHealth = false, })",
+    "scope": "dart",
+    "body": [
+      "bridge.registerModule(${1:module})"
+    ]
+  },
+  "mb_registerModules": {
+    "prefix": "mb_registerModules",
+    "description": "Call registerModules(List<FeatureModule> modules, { bool checkHealth = false, bool parallel = false, })",
+    "scope": "dart",
+    "body": [
+      "bridge.registerModules(${1:modules})"
+    ]
+  },
+  "mb_registerSingleton": {
+    "prefix": "mb_registerSingleton",
+    "description": "Call registerSingleton(T instance, { String? instanceName, bool override = false, void Function(T instance)? o...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerSingleton<T>(${1:instance})"
+    ]
+  },
+  "mb_registerSingletonAsync": {
+    "prefix": "mb_registerSingletonAsync",
+    "description": "Call registerSingletonAsync(Future<T> Function() factory, { String? instanceName, bool override = false, void Funct...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerSingletonAsync<T>(${1:factory})"
+    ]
+  },
+  "mb_registerSingletonWithDependencies": {
+    "prefix": "mb_registerSingletonWithDependencies",
+    "description": "Call registerSingletonWithDependencies({ required T Function(ModularBridge bridge) factoryFunc, required Iterable<DependencyKe...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerSingletonWithDependencies<T>(factoryFunc: ${1:factoryFunc}, dependsOn: ${2:dependsOn})"
+    ]
+  },
+  "mb_registerSingletonWithDependenciesAsync": {
+    "prefix": "mb_registerSingletonWithDependenciesAsync",
+    "description": "Call registerSingletonWithDependenciesAsync({ required FutureOr<T> Function(ModularBridge bridge) factoryFunc, required Iterable<De...)",
+    "scope": "dart",
+    "body": [
+      "bridge.registerSingletonWithDependenciesAsync<T>(factoryFunc: ${1:factoryFunc}, dependsOn: ${2:dependsOn})"
+    ]
+  },
+  "mb_register_async": {
+    "prefix": "mb_register_async",
     "description": "registerAsyncSingleton — async factory with retry policy",
     "scope": "dart",
     "body": [
@@ -290,36 +1687,35 @@
       ");"
     ]
   },
-  "mb.register.factory": {
-    "prefix": "mb.register.factory",
+  "mb_register_factory": {
+    "prefix": "mb_register_factory",
     "description": "registerFactory — new instance per resolution",
     "scope": "dart",
     "body": [
       "bridge.registerFactory<${1:Service}>(() => ${1:Service}());"
     ]
   },
-  "mb.register.lazy": {
-    "prefix": "mb.register.lazy",
+  "mb_register_lazy": {
+    "prefix": "mb_register_lazy",
     "description": "registerLazySingleton — created on first get<T>()",
     "scope": "dart",
     "body": [
       "bridge.registerLazySingleton<${1:Repository}>(",
       "  () => ${1:Repository}Impl(${2:bridge.get<Dependency>()}),",
-      "  instanceName: '${3}',",
-      "  dependsOn: [dep<${4:Dependency}>()],",
+      "  dependsOn: [dep<${3:Dependency}>()],",
       ");"
     ]
   },
-  "mb.register.module": {
-    "prefix": "mb.register.module",
+  "mb_register_module": {
+    "prefix": "mb_register_module",
     "description": "Register a single FeatureModule",
     "scope": "dart",
     "body": [
       "await ModularBridge.I.registerModule(${1:AuthModule()}${2:, checkHealth: true});"
     ]
   },
-  "mb.register.modules": {
-    "prefix": "mb.register.modules",
+  "mb_register_modules": {
+    "prefix": "mb_register_modules",
     "description": "Register a batch of modules (topologically sorted)",
     "scope": "dart",
     "body": [
@@ -330,8 +1726,8 @@
       "]);"
     ]
   },
-  "mb.register.param": {
-    "prefix": "mb.register.param",
+  "mb_register_param": {
+    "prefix": "mb_register_param",
     "description": "registerFactoryParam + getParam pair",
     "scope": "dart",
     "body": [
@@ -345,16 +1741,16 @@
       ");"
     ]
   },
-  "mb.register.singleton": {
-    "prefix": "mb.register.singleton",
+  "mb_register_singleton": {
+    "prefix": "mb_register_singleton",
     "description": "registerSingleton — eager shared instance",
     "scope": "dart",
     "body": [
       "bridge.registerSingleton<${1:Service}>(${1:Service}()${2:, onDispose: (s) => s.dispose()});"
     ]
   },
-  "mb.register.withdeps": {
-    "prefix": "mb.register.withdeps",
+  "mb_register_withdeps": {
+    "prefix": "mb_register_withdeps",
     "description": "registerSingletonWithDependencies — ordered startup",
     "scope": "dart",
     "body": [
@@ -366,16 +1762,128 @@
       ");"
     ]
   },
-  "mb.reset": {
-    "prefix": "mb.reset",
+  "mb_remove": {
+    "prefix": "mb_remove",
+    "description": "Call remove(String key)",
+    "scope": "dart",
+    "body": [
+      "config.remove(${1:key})"
+    ]
+  },
+  "mb_removeConfigValue": {
+    "prefix": "mb_removeConfigValue",
+    "description": "Call removeConfigValue(String key)",
+    "scope": "dart",
+    "body": [
+      "scope.removeConfigValue(${1:key})"
+    ]
+  },
+  "mb_removeEventInterceptor": {
+    "prefix": "mb_removeEventInterceptor",
+    "description": "Call removeEventInterceptor(BridgeEventInterceptor interceptor)",
+    "scope": "dart",
+    "body": [
+      "bridge.eventBus.removeEventInterceptor(${1:interceptor})"
+    ]
+  },
+  "mb_removeModuleDependencies": {
+    "prefix": "mb_removeModuleDependencies",
+    "description": "Call removeModuleDependencies(String moduleName)",
+    "scope": "dart",
+    "body": [
+      "scope.removeModuleDependencies(${1:moduleName})"
+    ]
+  },
+  "mb_removeResolutionInterceptor": {
+    "prefix": "mb_removeResolutionInterceptor",
+    "description": "Call removeResolutionInterceptor(BridgeResolutionInterceptor interceptor)",
+    "scope": "dart",
+    "body": [
+      "bridge.removeResolutionInterceptor(${1:interceptor})"
+    ]
+  },
+  "mb_removeRuntimeOverrides": {
+    "prefix": "mb_removeRuntimeOverrides",
+    "description": "Call removeRuntimeOverrides",
+    "scope": "dart",
+    "body": [
+      "config.removeRuntimeOverrides()"
+    ]
+  },
+  "mb_report": {
+    "prefix": "mb_report",
+    "description": "Call report(Object? error)",
+    "scope": "dart",
+    "body": [
+      "bridge.report(${1:error})"
+    ]
+  },
+  "mb_reset": {
+    "prefix": "mb_reset",
     "description": "Reset the container (tests / logout flows)",
     "scope": "dart",
     "body": [
       "await bridge.reset(disposeInstances: ${1|true,false|});"
     ]
   },
-  "mb.retry": {
-    "prefix": "mb.retry",
+  "mb_resetInstance": {
+    "prefix": "mb_resetInstance",
+    "description": "Call resetInstance",
+    "scope": "dart",
+    "body": [
+      "ModularBridge.resetInstance()"
+    ]
+  },
+  "mb_resetLazySingleton": {
+    "prefix": "mb_resetLazySingleton",
+    "description": "Call resetLazySingleton({ String? instanceName, bool disposeHooks = true, FutureOr<void> Function(T instance)? ...)",
+    "scope": "dart",
+    "body": [
+      "bridge.resetLazySingleton<T>()"
+    ]
+  },
+  "mb_resetLazySingletons": {
+    "prefix": "mb_resetLazySingletons",
+    "description": "Call resetLazySingletons({bool disposeHooks = true})",
+    "scope": "dart",
+    "body": [
+      "bridge.resetLazySingletons()"
+    ]
+  },
+  "mb_resetMetrics": {
+    "prefix": "mb_resetMetrics",
+    "description": "Call resetMetrics",
+    "scope": "dart",
+    "body": [
+      "bridge.resetMetrics()"
+    ]
+  },
+  "mb_resetScope": {
+    "prefix": "mb_resetScope",
+    "description": "Call resetScope({bool disposeInstances = true})",
+    "scope": "dart",
+    "body": [
+      "bridge.resetScope()"
+    ]
+  },
+  "mb_resolveTarget": {
+    "prefix": "mb_resolveTarget",
+    "description": "Call resolveTarget(DependencyInfo from, DependencyKey dep)",
+    "scope": "dart",
+    "body": [
+      "bridge.resolveTarget(${1:from}, ${2:dep})"
+    ]
+  },
+  "mb_resume": {
+    "prefix": "mb_resume",
+    "description": "Call resume",
+    "scope": "dart",
+    "body": [
+      "subscription.resume()"
+    ]
+  },
+  "mb_retry": {
+    "prefix": "mb_retry",
     "description": "BridgeRetryPolicy for flaky async dependencies",
     "scope": "dart",
     "body": [
@@ -387,8 +1895,8 @@
       ");"
     ]
   },
-  "mb.scope": {
-    "prefix": "mb.scope",
+  "mb_scope": {
+    "prefix": "mb_scope",
     "description": "Request/session-scoped dependencies",
     "scope": "dart",
     "body": [
@@ -406,8 +1914,8 @@
       "}"
     ]
   },
-  "mb.scope.push": {
-    "prefix": "mb.scope.push",
+  "mb_scope_push": {
+    "prefix": "mb_scope_push",
     "description": "pushNewScope — stack-based scoping",
     "scope": "dart",
     "body": [
@@ -420,1396 +1928,214 @@
       ");"
     ]
   },
-  "mb.tryget": {
-    "prefix": "mb.tryget",
-    "description": "Optional resolution — null when not registered",
-    "scope": "dart",
-    "body": [
-      "final ${1:Service}? ${2:service} = bridge.tryGet<${1:Service}>();"
-    ]
-  },
-  "mb.unregistered": {
-    "prefix": "mb.unregistered",
-    "description": "Unregister a module / dependency",
-    "scope": "dart",
-    "body": [
-      "await bridge.unregisterModule<${1:FeatureModule}>${2|, force: true|}();"
-    ]
-  },
-  "mb.warmup": {
-    "prefix": "mb.warmup",
-    "description": "Eagerly resolve all singleton-style registrations",
-    "scope": "dart",
-    "body": [
-      "await bridge.warmup();"
-    ]
-  },
-  "mb.addEventInterceptor": {
-    "prefix": "mb.addEventInterceptor",
-    "description": "Call addEventInterceptor(BridgeEventInterceptor interceptor)",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.addEventInterceptor(${1:interceptor})"
-    ]
-  },
-  "mb.addResolutionInterceptor": {
-    "prefix": "mb.addResolutionInterceptor",
-    "description": "Call addResolutionInterceptor(BridgeResolutionInterceptor interceptor)",
-    "scope": "dart",
-    "body": [
-      "bridge.addResolutionInterceptor(${1:interceptor})"
-    ]
-  },
-  "mb.allReadySync": {
-    "prefix": "mb.allReadySync",
-    "description": "Call allReadySync({bool ignorePendingAsyncCreation = false})",
-    "scope": "dart",
-    "body": [
-      "bridge.allReadySync(ignorePendingAsyncCreation: ${1:false})"
-    ]
-  },
-  "mb.assertAllReadySync": {
-    "prefix": "mb.assertAllReadySync",
-    "description": "Call assertAllReadySync",
-    "scope": "dart",
-    "body": [
-      "bridge.assertAllReadySync()"
-    ]
-  },
-  "mb.assertNoLeaks": {
-    "prefix": "mb.assertNoLeaks",
-    "description": "Call assertNoLeaks",
-    "scope": "dart",
-    "body": [
-      "bridge.assertNoLeaks()"
-    ]
-  },
-  "mb.assertRegistered": {
-    "prefix": "mb.assertRegistered",
-    "description": "Call assertRegistered({String? instanceName})",
-    "scope": "dart",
-    "body": [
-      "bridge.assertRegistered<T extends Object>(instanceName: ${1:instanceName})"
-    ]
-  },
-  "mb.call": {
-    "prefix": "mb.call",
-    "description": "Call call({String? instanceName})",
-    "scope": "dart",
-    "body": [
-      "bridge.call<T extends Object>(instanceName: ${1:instanceName})"
-    ]
-  },
-  "mb.cancelSubscriptionsForOwner": {
-    "prefix": "mb.cancelSubscriptionsForOwner",
-    "description": "Call cancelSubscriptionsForOwner(String ownerId)",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.cancelSubscriptionsForOwner(${1:ownerId})"
-    ]
-  },
-  "mb.checkModuleHealth": {
-    "prefix": "mb.checkModuleHealth",
-    "description": "Call checkModuleHealth",
-    "scope": "dart",
-    "body": [
-      "bridge.checkModuleHealth()"
-    ]
-  },
-  "mb.clearEventInterceptors": {
-    "prefix": "mb.clearEventInterceptors",
-    "description": "Call clearEventInterceptors",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.clearEventInterceptors()"
-    ]
-  },
-  "mb.clearReplayHistory": {
-    "prefix": "mb.clearReplayHistory",
-    "description": "Call clearReplayHistory",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.clearReplayHistory()"
-    ]
-  },
-  "mb.clearResolutionInterceptors": {
-    "prefix": "mb.clearResolutionInterceptors",
-    "description": "Call clearResolutionInterceptors",
-    "scope": "dart",
-    "body": [
-      "bridge.clearResolutionInterceptors()"
-    ]
-  },
-  "mb.clearSubscriptions": {
-    "prefix": "mb.clearSubscriptions",
-    "description": "Call clearSubscriptions",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.clearSubscriptions()"
-    ]
-  },
-  "mb.configValue": {
-    "prefix": "mb.configValue",
-    "description": "Call configValue(String key, {T? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "bridge.configValue<T>(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.createChildScope": {
-    "prefix": "mb.createChildScope",
-    "description": "Call createChildScope({String? scopeName})",
-    "scope": "dart",
-    "body": [
-      "scope.createChildScope(scopeName: ${1:scopeName})"
-    ]
-  },
-  "mb.createIsolated": {
-    "prefix": "mb.createIsolated",
-    "description": "Call ModularBridge.createIsolated({\r\n    BridgeConfig? config,\r\n    BridgeEventBus? eventBus,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "ModularBridge.createIsolated(config: ${1:config}, eventBus: ${2:eventBus})"
-    ]
-  },
-  "mb.createScope": {
-    "prefix": "mb.createScope",
-    "description": "Call createScope({String? scopeName})",
-    "scope": "dart",
-    "body": [
-      "bridge.createScope(scopeName: ${1:scopeName})"
-    ]
-  },
-  "mb.createScopeAsync": {
-    "prefix": "mb.createScopeAsync",
-    "description": "Call createScopeAsync([\r\n    FutureOr<void> Function(BridgeScope scope)? init,\r\n  ])",
-    "scope": "dart",
-    "body": [
-      "bridge.createScopeAsync(${1:arg})"
-    ]
-  },
-  "mb.debugLeakReport": {
-    "prefix": "mb.debugLeakReport",
-    "description": "Call debugLeakReport",
-    "scope": "dart",
-    "body": [
-      "bridge.debugLeakReport()"
-    ]
-  },
-  "mb.dependenciesOf": {
-    "prefix": "mb.dependenciesOf",
-    "description": "Call dependenciesOf(DependencyInfo info)",
-    "scope": "dart",
-    "body": [
-      "bridge.dependencyGraph().dependenciesOf(${1:info})"
-    ]
-  },
-  "mb.dependencyGraph": {
-    "prefix": "mb.dependencyGraph",
-    "description": "Call dependencyGraph",
-    "scope": "dart",
-    "body": [
-      "bridge.dependencyGraph()"
-    ]
-  },
-  "mb.diagnosticsReport": {
-    "prefix": "mb.diagnosticsReport",
-    "description": "Call diagnosticsReport",
-    "scope": "dart",
-    "body": [
-      "bridge.diagnosticsReport()"
-    ]
-  },
-  "mb.dropScope": {
-    "prefix": "mb.dropScope",
-    "description": "Call dropScope(String scopeName)",
-    "scope": "dart",
-    "body": [
-      "bridge.dropScope(${1:scopeName})"
-    ]
-  },
-  "mb.enableDevTools": {
-    "prefix": "mb.enableDevTools",
-    "description": "Call enableDevTools",
-    "scope": "dart",
-    "body": [
-      "bridge.enableDevTools()"
-    ]
-  },
-  "mb.findDescriptorFromRoot": {
-    "prefix": "mb.findDescriptorFromRoot",
-    "description": "Call findDescriptorFromRoot(DependencyKey key)",
-    "scope": "dart",
-    "body": [
-      "bridge.findDescriptorFromRoot(${1:key})"
-    ]
-  },
-  "mb.findScope": {
-    "prefix": "mb.findScope",
-    "description": "Call findScope(String scopeName)",
-    "scope": "dart",
-    "body": [
-      "bridge.findScope(${1:scopeName})"
-    ]
-  },
-  "mb.fn.parseEnvFile": {
-    "prefix": "mb.fn.parseEnvFile",
-    "description": "Call parseEnvFile(String source)",
-    "scope": "dart",
-    "body": [
-      "parseEnvFile(${1:source})"
-    ]
-  },
-  "mb.fn.reportBridgeError": {
-    "prefix": "mb.fn.reportBridgeError",
-    "description": "Call reportBridgeError(\n  Object error,\n  StackTrace stackTrace, {\n  String library = 'modular_bridge',\n  String? context,\n})",
-    "scope": "dart",
-    "body": [
-      "reportBridgeError(${1:error}, ${2:stackTrace}, library: ${3:'modular_bridge'}, context: ${4:context})"
-    ]
-  },
-  "mb.fromAsset": {
-    "prefix": "mb.fromAsset",
-    "description": "Call fromAsset(\r\n    String assetPath, {\r\n    required Future<String> Function(String path) loader,\r\n    BridgeEnvironment? environment,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "BridgeConfig.fromAsset(${1:assetPath}, loader: ${2:loader}, environment: ${3:environment})"
-    ]
-  },
-  "mb.fromDescriptor": {
-    "prefix": "mb.fromDescriptor",
-    "description": "Call DependencyInfo.fromDescriptor(DependencyDescriptor<dynamic> d)",
-    "scope": "dart",
-    "body": [
-      "DependencyInfo.fromDescriptor(${1:d})"
-    ]
-  },
-  "mb.fromEnvFile": {
-    "prefix": "mb.fromEnvFile",
-    "description": "Call fromEnvFile(\r\n    String path, {\r\n    required Future<String> Function(String path) loader,\r\n    BridgeEnvironment? environment,\r\n    List<String> environmentKeys = envEnvironmentKeys,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "BridgeConfig.fromEnvFile(${1:path}, loader: ${2:loader}, environment: ${3:environment}, environmentKeys: ${4:envEnvironmentKeys})"
-    ]
-  },
-  "mb.fromEnvString": {
-    "prefix": "mb.fromEnvString",
-    "description": "Call BridgeConfig.fromEnvString(\r\n    String source, {\r\n    BridgeEnvironment? environment,\r\n    List<String> environmentKeys = envEnvironmentKeys,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "BridgeConfig.fromEnvString(${1:source}, environment: ${2:environment}, environmentKeys: ${3:envEnvironmentKeys})"
-    ]
-  },
-  "mb.fromJson": {
-    "prefix": "mb.fromJson",
-    "description": "Call BridgeConfig.fromJson(\r\n    Map<String, dynamic> json, {\r\n    BridgeEnvironment? environment,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "BridgeConfig.fromJson(${1:String}, ${2:json}, environment: ${3:environment})"
-    ]
-  },
-  "mb.fromString": {
-    "prefix": "mb.fromString",
-    "description": "Call BridgeConfig.fromString(\r\n    String source, {\r\n    BridgeEnvironment? environment,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "BridgeConfig.fromString(${1:source}, environment: ${2:environment})"
-    ]
-  },
-  "mb.get.activeModuleNames": {
-    "prefix": "mb.get.activeModuleNames",
-    "description": "Access activeModuleNames",
-    "scope": "dart",
-    "body": [
-      "bridge.activeModuleNames"
-    ]
-  },
-  "mb.get.activeScopeNames": {
-    "prefix": "mb.get.activeScopeNames",
-    "description": "Access activeScopeNames",
-    "scope": "dart",
-    "body": [
-      "bridge.activeScopeNames"
-    ]
-  },
-  "mb.get.activeSubscriptionCount": {
-    "prefix": "mb.get.activeSubscriptionCount",
-    "description": "Access activeSubscriptionCount",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.activeSubscriptionCount"
-    ]
-  },
-  "mb.get.averageMicros": {
-    "prefix": "mb.get.averageMicros",
-    "description": "Access averageMicros",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.averageMicros"
-    ]
-  },
-  "mb.get.cacheHitRatio": {
-    "prefix": "mb.get.cacheHitRatio",
-    "description": "Access cacheHitRatio",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.cacheHitRatio"
-    ]
-  },
-  "mb.get.configOverrides": {
-    "prefix": "mb.get.configOverrides",
-    "description": "Access configOverrides",
-    "scope": "dart",
-    "body": [
-      "scope.configOverrides"
-    ]
-  },
-  "mb.get.currentScope": {
-    "prefix": "mb.get.currentScope",
-    "description": "Access currentScope",
-    "scope": "dart",
-    "body": [
-      "bridge.currentScope"
-    ]
-  },
-  "mb.get.currentScopeName": {
-    "prefix": "mb.get.currentScopeName",
-    "description": "Access currentScopeName",
-    "scope": "dart",
-    "body": [
-      "bridge.currentScopeName"
-    ]
-  },
-  "mb.get.currentValues": {
-    "prefix": "mb.get.currentValues",
-    "description": "Access currentValues",
-    "scope": "dart",
-    "body": [
-      "config.currentValues"
-    ]
-  },
-  "mb.get.dependencyInfo": {
-    "prefix": "mb.get.dependencyInfo",
-    "description": "Access dependencyInfo",
-    "scope": "dart",
-    "body": [
-      "bridge.dependencyInfo"
-    ]
-  },
-  "mb.get.entries": {
-    "prefix": "mb.get.entries",
-    "description": "Access entries",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.entries"
-    ]
-  },
-  "mb.get.entry": {
-    "prefix": "mb.get.entry",
-    "description": "Access entry",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.entry"
-    ]
-  },
-  "mb.get.environment": {
-    "prefix": "mb.get.environment",
-    "description": "Access environment",
-    "scope": "dart",
-    "body": [
-      "config.environment"
-    ]
-  },
-  "mb.get.eventBus": {
-    "prefix": "mb.get.eventBus",
-    "description": "Access eventBus",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus"
-    ]
-  },
-  "mb.get.eventInterceptors": {
-    "prefix": "mb.get.eventInterceptors",
-    "description": "Access eventInterceptors",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.eventInterceptors"
-    ]
-  },
-  "mb.get.hasCycles": {
-    "prefix": "mb.get.hasCycles",
-    "description": "Access hasCycles",
-    "scope": "dart",
-    "body": [
-      "bridge.dependencyGraph().hasCycles"
-    ]
-  },
-  "mb.get.instance": {
-    "prefix": "mb.get.instance",
-    "description": "Access instance",
-    "scope": "dart",
-    "body": [
-      "ModularBridge.instance"
-    ]
-  },
-  "mb.get.isDev": {
-    "prefix": "mb.get.isDev",
-    "description": "Access isDev",
-    "scope": "dart",
-    "body": [
-      "BridgeEnvironment.dev.isDev"
-    ]
-  },
-  "mb.get.isDisposed": {
-    "prefix": "mb.get.isDisposed",
-    "description": "Access isDisposed",
-    "scope": "dart",
-    "body": [
-      "bridge.isDisposed"
-    ]
-  },
-  "mb.get.isFinal": {
-    "prefix": "mb.get.isFinal",
-    "description": "Access isFinal",
-    "scope": "dart",
-    "body": [
-      "scope.isFinal"
-    ]
-  },
-  "mb.get.isHealthy": {
-    "prefix": "mb.get.isHealthy",
-    "description": "Access isHealthy",
-    "scope": "dart",
-    "body": [
-      "bridge.isHealthy"
-    ]
-  },
-  "mb.get.isProd": {
-    "prefix": "mb.get.isProd",
-    "description": "Access isProd",
-    "scope": "dart",
-    "body": [
-      "BridgeEnvironment.dev.isProd"
-    ]
-  },
-  "mb.get.isStaging": {
-    "prefix": "mb.get.isStaging",
-    "description": "Access isStaging",
-    "scope": "dart",
-    "body": [
-      "BridgeEnvironment.dev.isStaging"
-    ]
-  },
-  "mb.get.moduleEntries": {
-    "prefix": "mb.get.moduleEntries",
-    "description": "Access moduleEntries",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.moduleEntries"
-    ]
-  },
-  "mb.get.onChanged": {
-    "prefix": "mb.get.onChanged",
-    "description": "Access onChanged",
-    "scope": "dart",
-    "body": [
-      "config.onChanged"
-    ]
-  },
-  "mb.get.onConfigChanged": {
-    "prefix": "mb.get.onConfigChanged",
-    "description": "Access onConfigChanged",
-    "scope": "dart",
-    "body": [
-      "bridge.onConfigChanged"
-    ]
-  },
-  "mb.get.onDependencyEvents": {
-    "prefix": "mb.get.onDependencyEvents",
-    "description": "Access onDependencyEvents",
-    "scope": "dart",
-    "body": [
-      "bridge.onDependencyEvents"
-    ]
-  },
-  "mb.get.onEnvironmentChanged": {
-    "prefix": "mb.get.onEnvironmentChanged",
-    "description": "Access onEnvironmentChanged",
-    "scope": "dart",
-    "body": [
-      "config.onEnvironmentChanged"
-    ]
-  },
-  "mb.get.parentScope": {
-    "prefix": "mb.get.parentScope",
-    "description": "Access parentScope",
-    "scope": "dart",
-    "body": [
-      "scope.parentScope"
-    ]
-  },
-  "mb.get.pendingReadinessKeys": {
-    "prefix": "mb.get.pendingReadinessKeys",
-    "description": "Access pendingReadinessKeys",
-    "scope": "dart",
-    "body": [
-      "bridge.pendingReadinessKeys"
-    ]
-  },
-  "mb.get.publishCounts": {
-    "prefix": "mb.get.publishCounts",
-    "description": "Access publishCounts",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.publishCounts"
-    ]
-  },
-  "mb.get.registeredDependencies": {
-    "prefix": "mb.get.registeredDependencies",
-    "description": "Access registeredDependencies",
-    "scope": "dart",
-    "body": [
-      "bridge.registeredDependencies"
-    ]
-  },
-  "mb.get.resolutionInterceptors": {
-    "prefix": "mb.get.resolutionInterceptors",
-    "description": "Access resolutionInterceptors",
-    "scope": "dart",
-    "body": [
-      "bridge.resolutionInterceptors"
-    ]
-  },
-  "mb.get.totalCacheHits": {
-    "prefix": "mb.get.totalCacheHits",
-    "description": "Access totalCacheHits",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.totalCacheHits"
-    ]
-  },
-  "mb.get.totalFailures": {
-    "prefix": "mb.get.totalFailures",
-    "description": "Access totalFailures",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.totalFailures"
-    ]
-  },
-  "mb.get.totalPublished": {
-    "prefix": "mb.get.totalPublished",
-    "description": "Access totalPublished",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.totalPublished"
-    ]
-  },
-  "mb.get.totalResolutions": {
-    "prefix": "mb.get.totalResolutions",
-    "description": "Access totalResolutions",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.totalResolutions"
-    ]
-  },
-  "mb.getAllAsync": {
-    "prefix": "mb.getAllAsync",
-    "description": "Call getAllAsync",
-    "scope": "dart",
-    "body": [
-      "bridge.getAllAsync<T extends Object>()"
-    ]
-  },
-  "mb.getBool": {
-    "prefix": "mb.getBool",
-    "description": "Call getBool(String key, {bool? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getBool(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.getDouble": {
-    "prefix": "mb.getDouble",
-    "description": "Call getDouble(String key, {double? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getDouble(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.getDuration": {
-    "prefix": "mb.getDuration",
-    "description": "Call getDuration(String key, {Duration? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getDuration(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.getInt": {
-    "prefix": "mb.getInt",
-    "description": "Call getInt(String key, {int? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getInt(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.getMap": {
-    "prefix": "mb.getMap",
-    "description": "Call getMap(String key,\r\n      {Map<String, dynamic>? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getMap(${1:key}, String: ${2:String}, defaultValue: ${3:defaultValue})"
-    ]
-  },
-  "mb.getModule": {
-    "prefix": "mb.getModule",
-    "description": "Call getModule",
-    "scope": "dart",
-    "body": [
-      "bridge.getModule<M extends FeatureModule>()"
-    ]
-  },
-  "mb.getParam": {
-    "prefix": "mb.getParam",
-    "description": "Call getParam({\r\n    required P1 param1,\r\n    required P2 param2,\r\n    String? instanceName,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.getParam<T extends Object, P1, P2>(param1: ${1:param1}, param2: ${2:param2}, instanceName: ${3:instanceName})"
-    ]
-  },
-  "mb.getParamAsync": {
-    "prefix": "mb.getParamAsync",
-    "description": "Call getParamAsync({\r\n    required P1 param1,\r\n    required P2 param2,\r\n    String? instanceName,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.getParamAsync<T extends Object, P1, P2>(param1: ${1:param1}, param2: ${2:param2}, instanceName: ${3:instanceName})"
-    ]
-  },
-  "mb.getSection": {
-    "prefix": "mb.getSection",
-    "description": "Call getSection(\r\n    String key,\r\n    T Function(Map<String, dynamic> values) decoder,\r\n  )",
-    "scope": "dart",
-    "body": [
-      "config.getSection<T>(${1:key}, ${2:decoder})"
-    ]
-  },
-  "mb.getString": {
-    "prefix": "mb.getString",
-    "description": "Call getString(String key, {String? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getString(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.getUri": {
-    "prefix": "mb.getUri",
-    "description": "Call getUri(String key, {Uri? defaultValue})",
-    "scope": "dart",
-    "body": [
-      "config.getUri(${1:key}, defaultValue: ${2:defaultValue})"
-    ]
-  },
-  "mb.hasConfigOverride": {
-    "prefix": "mb.hasConfigOverride",
-    "description": "Call hasConfigOverride(String key)",
-    "scope": "dart",
-    "body": [
-      "scope.hasConfigOverride(${1:key})"
-    ]
-  },
-  "mb.hasKey": {
-    "prefix": "mb.hasKey",
-    "description": "Call hasKey(String key)",
-    "scope": "dart",
-    "body": [
-      "config.hasKey(${1:key})"
-    ]
-  },
-  "mb.hasListeners": {
-    "prefix": "mb.hasListeners",
-    "description": "Call hasListeners",
-    "scope": "dart",
-    "body": [
-      "bridge.hasListeners<T extends BridgeEvent>()"
-    ]
-  },
-  "mb.hasLocal": {
-    "prefix": "mb.hasLocal",
-    "description": "Call hasLocal(DependencyKey key)",
-    "scope": "dart",
-    "body": [
-      "scope.hasLocal(${1:key})"
-    ]
-  },
-  "mb.history": {
-    "prefix": "mb.history",
-    "description": "Call history",
-    "scope": "dart",
-    "body": [
-      "bridge.history<T extends BridgeEvent>()"
-    ]
-  },
-  "mb.isModuleRegistered": {
-    "prefix": "mb.isModuleRegistered",
-    "description": "Call isModuleRegistered",
-    "scope": "dart",
-    "body": [
-      "bridge.isModuleRegistered<M extends FeatureModule>()"
-    ]
-  },
-  "mb.isReady": {
-    "prefix": "mb.isReady",
-    "description": "Call isReady({\r\n    String? instanceName,\r\n    Duration? timeout,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.isReady<T extends Object>(instanceName: ${1:instanceName}, timeout: ${2:timeout})"
-    ]
-  },
-  "mb.isReadySync": {
-    "prefix": "mb.isReadySync",
-    "description": "Call isReadySync({String? instanceName})",
-    "scope": "dart",
-    "body": [
-      "bridge.isReadySync<T extends Object>(instanceName: ${1:instanceName})"
-    ]
-  },
-  "mb.isRegistered": {
-    "prefix": "mb.isRegistered",
-    "description": "Call isRegistered({String? instanceName})",
-    "scope": "dart",
-    "body": [
-      "bridge.isRegistered<T extends Object>(instanceName: ${1:instanceName})"
-    ]
-  },
-  "mb.isRegisteredFromRoot": {
-    "prefix": "mb.isRegisteredFromRoot",
-    "description": "Call isRegisteredFromRoot({String? instanceName})",
-    "scope": "dart",
-    "body": [
-      "bridge.isRegisteredFromRoot<T extends Object>(instanceName: ${1:instanceName})"
-    ]
-  },
-  "mb.isScopeActive": {
-    "prefix": "mb.isScopeActive",
-    "description": "Call isScopeActive(String scopeName)",
-    "scope": "dart",
-    "body": [
-      "bridge.isScopeActive(${1:scopeName})"
-    ]
-  },
-  "mb.lastEvent": {
-    "prefix": "mb.lastEvent",
-    "description": "Call lastEvent",
-    "scope": "dart",
-    "body": [
-      "bridge.lastEvent<T extends BridgeEvent>()"
-    ]
-  },
-  "mb.moduleDependents": {
-    "prefix": "mb.moduleDependents",
-    "description": "Call moduleDependents(Type moduleType)",
-    "scope": "dart",
-    "body": [
-      "bridge.moduleDependents(${1:moduleType})"
-    ]
-  },
-  "mb.new.BridgeAsyncDependencyException": {
-    "prefix": "mb.new.BridgeAsyncDependencyException",
-    "description": "Instantiate BridgeAsyncDependencyException",
-    "scope": "dart",
-    "body": [
-      "BridgeAsyncDependencyException(${1})"
-    ]
-  },
-  "mb.new.BridgeAsyncInterceptorException": {
-    "prefix": "mb.new.BridgeAsyncInterceptorException",
-    "description": "Instantiate BridgeAsyncInterceptorException",
-    "scope": "dart",
-    "body": [
-      "BridgeAsyncInterceptorException(${1})"
-    ]
-  },
-  "mb.new.BridgeCircularDependencyException": {
-    "prefix": "mb.new.BridgeCircularDependencyException",
-    "description": "Instantiate BridgeCircularDependencyException",
-    "scope": "dart",
-    "body": [
-      "BridgeCircularDependencyException(${1})"
-    ]
-  },
-  "mb.new.BridgeConfig": {
-    "prefix": "mb.new.BridgeConfig",
-    "description": "Instantiate BridgeConfig",
-    "scope": "dart",
-    "body": [
-      "BridgeConfig(${1})"
-    ]
-  },
-  "mb.new.BridgeConfigKeyNotFoundException": {
-    "prefix": "mb.new.BridgeConfigKeyNotFoundException",
-    "description": "Instantiate BridgeConfigKeyNotFoundException",
-    "scope": "dart",
-    "body": [
-      "BridgeConfigKeyNotFoundException(${1})"
-    ]
-  },
-  "mb.new.BridgeConfigTypeMismatchException": {
-    "prefix": "mb.new.BridgeConfigTypeMismatchException",
-    "description": "Instantiate BridgeConfigTypeMismatchException",
-    "scope": "dart",
-    "body": [
-      "BridgeConfigTypeMismatchException(${1})"
-    ]
-  },
-  "mb.new.BridgeDependencyAlreadyRegisteredException": {
-    "prefix": "mb.new.BridgeDependencyAlreadyRegisteredException",
-    "description": "Instantiate BridgeDependencyAlreadyRegisteredException",
-    "scope": "dart",
-    "body": [
-      "BridgeDependencyAlreadyRegisteredException(${1})"
-    ]
-  },
-  "mb.new.BridgeDependencyGraph": {
-    "prefix": "mb.new.BridgeDependencyGraph",
-    "description": "Instantiate BridgeDependencyGraph",
-    "scope": "dart",
-    "body": [
-      "BridgeDependencyGraph(${1})"
-    ]
-  },
-  "mb.new.BridgeDependencyNotFoundException": {
-    "prefix": "mb.new.BridgeDependencyNotFoundException",
-    "description": "Instantiate BridgeDependencyNotFoundException",
-    "scope": "dart",
-    "body": [
-      "BridgeDependencyNotFoundException(${1})"
-    ]
-  },
-  "mb.new.BridgeDiagnosticsReport": {
-    "prefix": "mb.new.BridgeDiagnosticsReport",
-    "description": "Instantiate BridgeDiagnosticsReport",
-    "scope": "dart",
-    "body": [
-      "BridgeDiagnosticsReport(${1})"
-    ]
-  },
-  "mb.new.BridgeErrorReport": {
-    "prefix": "mb.new.BridgeErrorReport",
-    "description": "Instantiate BridgeErrorReport",
-    "scope": "dart",
-    "body": [
-      "BridgeErrorReport(${1})"
-    ]
-  },
-  "mb.new.BridgeEventBus": {
-    "prefix": "mb.new.BridgeEventBus",
-    "description": "Instantiate BridgeEventBus",
-    "scope": "dart",
-    "body": [
-      "BridgeEventBus(${1})"
-    ]
-  },
-  "mb.new.BridgeModuleAlreadyRegisteredException": {
-    "prefix": "mb.new.BridgeModuleAlreadyRegisteredException",
-    "description": "Instantiate BridgeModuleAlreadyRegisteredException",
-    "scope": "dart",
-    "body": [
-      "BridgeModuleAlreadyRegisteredException(${1})"
-    ]
-  },
-  "mb.new.BridgeModuleInUseException": {
-    "prefix": "mb.new.BridgeModuleInUseException",
-    "description": "Instantiate BridgeModuleInUseException",
-    "scope": "dart",
-    "body": [
-      "BridgeModuleInUseException(${1})"
-    ]
-  },
-  "mb.new.BridgeModuleMissingDependencyException": {
-    "prefix": "mb.new.BridgeModuleMissingDependencyException",
-    "description": "Instantiate BridgeModuleMissingDependencyException",
-    "scope": "dart",
-    "body": [
-      "BridgeModuleMissingDependencyException(${1})"
-    ]
-  },
-  "mb.new.BridgeModuleNotFoundException": {
-    "prefix": "mb.new.BridgeModuleNotFoundException",
-    "description": "Instantiate BridgeModuleNotFoundException",
-    "scope": "dart",
-    "body": [
-      "BridgeModuleNotFoundException(${1})"
-    ]
-  },
-  "mb.new.BridgeRetryPolicy": {
-    "prefix": "mb.new.BridgeRetryPolicy",
-    "description": "Instantiate BridgeRetryPolicy",
-    "scope": "dart",
-    "body": [
-      "BridgeRetryPolicy(${1})"
-    ]
-  },
-  "mb.new.BridgeScopeNotFoundException": {
-    "prefix": "mb.new.BridgeScopeNotFoundException",
-    "description": "Instantiate BridgeScopeNotFoundException",
-    "scope": "dart",
-    "body": [
-      "BridgeScopeNotFoundException(${1})"
-    ]
-  },
-  "mb.new.BridgeWaitingTimeOutException": {
-    "prefix": "mb.new.BridgeWaitingTimeOutException",
-    "description": "Instantiate BridgeWaitingTimeOutException",
-    "scope": "dart",
-    "body": [
-      "BridgeWaitingTimeOutException(${1})"
-    ]
-  },
-  "mb.new.DependencyEdge": {
-    "prefix": "mb.new.DependencyEdge",
-    "description": "Instantiate DependencyEdge",
-    "scope": "dart",
-    "body": [
-      "DependencyEdge(${1})"
-    ]
-  },
-  "mb.new.DependencyInfo": {
-    "prefix": "mb.new.DependencyInfo",
-    "description": "Instantiate DependencyInfo",
-    "scope": "dart",
-    "body": [
-      "DependencyInfo(${1})"
-    ]
-  },
-  "mb.new.DependencyMetricEntry": {
-    "prefix": "mb.new.DependencyMetricEntry",
-    "description": "Instantiate DependencyMetricEntry",
-    "scope": "dart",
-    "body": [
-      "DependencyMetricEntry(${1})"
-    ]
-  },
-  "mb.new.DependencyMetrics": {
-    "prefix": "mb.new.DependencyMetrics",
-    "description": "Instantiate DependencyMetrics",
-    "scope": "dart",
-    "body": [
-      "DependencyMetrics(${1})"
-    ]
-  },
-  "mb.new.DeveloperLogBridgeErrorReporter": {
-    "prefix": "mb.new.DeveloperLogBridgeErrorReporter",
-    "description": "Instantiate DeveloperLogBridgeErrorReporter",
-    "scope": "dart",
-    "body": [
-      "DeveloperLogBridgeErrorReporter(${1})"
-    ]
-  },
-  "mb.new.ModularBridge": {
-    "prefix": "mb.new.ModularBridge",
-    "description": "Instantiate ModularBridge",
-    "scope": "dart",
-    "body": [
-      "ModularBridge(${1})"
-    ]
-  },
-  "mb.nodeId": {
-    "prefix": "mb.nodeId",
-    "description": "Call nodeId(DependencyInfo info)",
-    "scope": "dart",
-    "body": [
-      "nodeId(${1:info})"
-    ]
-  },
-  "mb.on": {
-    "prefix": "mb.on",
-    "description": "Call on",
-    "scope": "dart",
-    "body": [
-      "bridge.on<T extends BridgeEvent>()"
-    ]
-  },
-  "mb.onModulesReady": {
-    "prefix": "mb.onModulesReady",
-    "description": "Call onModulesReady(FutureOr<void> Function(ModularBridge bridge) callback)",
-    "scope": "dart",
-    "body": [
-      "bridge.onModulesReady(${1:callback})"
-    ]
-  },
-  "mb.popScope": {
-    "prefix": "mb.popScope",
-    "description": "Call popScope",
-    "scope": "dart",
-    "body": [
-      "bridge.popScope()"
-    ]
-  },
-  "mb.popScopesTill": {
-    "prefix": "mb.popScopesTill",
-    "description": "Call popScopesTill(String name, {bool inclusive = true})",
-    "scope": "dart",
-    "body": [
-      "bridge.popScopesTill(${1:name}, inclusive: ${2:true})"
-    ]
-  },
-  "mb.pushNewScope": {
-    "prefix": "mb.pushNewScope",
-    "description": "Call pushNewScope({\r\n    String? scopeName,\r\n    void Function(ModularBridge bridge)? init,\r\n    FutureOr<void> Function()? dispose,\r\n    bool isFinal = false,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.pushNewScope(scopeName: ${1:scopeName}, init: ${2:init}, dispose: ${3:dispose}, isFinal: ${4:false})"
-    ]
-  },
-  "mb.pushNewScopeAsync": {
-    "prefix": "mb.pushNewScopeAsync",
-    "description": "Call pushNewScopeAsync({\r\n    String? scopeName,\r\n    FutureOr<void> Function(ModularBridge bridge)? init,\r\n    FutureOr<void> Function()? dispose,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.pushNewScopeAsync(scopeName: ${1:scopeName}, init: ${2:init}, dispose: ${3:dispose})"
-    ]
-  },
-  "mb.record": {
-    "prefix": "mb.record",
-    "description": "Call record(\r\n    String key, {\r\n    required int elapsedMicros,\r\n    required bool cacheHit,\r\n    required bool failed,\r\n    String? module,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.metrics.record(${1:key}, elapsedMicros: ${2:elapsedMicros}, cacheHit: ${3:cacheHit}, failed: ${4:failed}, module: ${5:module})"
-    ]
-  },
-  "mb.registerAsyncSingleton": {
-    "prefix": "mb.registerAsyncSingleton",
-    "description": "Call registerAsyncSingleton(\r\n    Future<T> Function() factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    void Function(T instance)? onDispose,\r\n    bool eager = false,\r\n    bool signalsReady = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n    BridgeRetryPolicy? retryPolicy,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerAsyncSingleton<T extends Object>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, onDispose: ${4:onDispose}, eager: ${5:false}, signalsReady: ${6:false}, dependsOn: ${7:const []}, onCreated: ${8:onCreated}, retryPolicy: ${9:retryPolicy})"
-    ]
-  },
-  "mb.registerCachedFactoryParam": {
-    "prefix": "mb.registerCachedFactoryParam",
-    "description": "Call registerCachedFactoryParam(\r\n    T Function(P1 param1, P2 param2) factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerCachedFactoryParam<T extends Object, P1, P2>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, dependsOn: ${4:const []}, onCreated: ${5:onCreated})"
-    ]
-  },
-  "mb.registerCachedFactoryParamAsync": {
-    "prefix": "mb.registerCachedFactoryParamAsync",
-    "description": "Call registerCachedFactoryParamAsync(\r\n    Future<T> Function(P1 param1, P2 param2) factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerCachedFactoryParamAsync<T extends Object, P1, P2>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, dependsOn: ${4:const []}, onCreated: ${5:onCreated})"
-    ]
-  },
-  "mb.registerConfigBinding": {
-    "prefix": "mb.registerConfigBinding",
-    "description": "Call registerConfigBinding({\r\n    required String configKey,\r\n    required T Function(dynamic value) decoder,\r\n    dynamic defaultValue,\r\n    String? instanceName,\r\n    bool override = false,\r\n    void Function(T instance)? onDispose,\r\n    bool signalsReady = false,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerConfigBinding<T extends Object>(configKey: ${1:configKey}, decoder: ${2:decoder}, defaultValue: ${3:defaultValue}, instanceName: ${4:instanceName}, override: ${5:false}, onDispose: ${6:onDispose}, signalsReady: ${7:false})"
-    ]
-  },
-  "mb.registerFactory": {
-    "prefix": "mb.registerFactory",
-    "description": "Call registerFactory(\r\n    T Function() factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerFactory<T extends Object>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, dependsOn: ${4:const []}, onCreated: ${5:onCreated})"
-    ]
-  },
-  "mb.registerFactoryAsync": {
-    "prefix": "mb.registerFactoryAsync",
-    "description": "Call registerFactoryAsync(\r\n    Future<T> Function() factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n    BridgeRetryPolicy? retryPolicy,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerFactoryAsync<T extends Object>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, dependsOn: ${4:const []}, onCreated: ${5:onCreated}, retryPolicy: ${6:retryPolicy})"
-    ]
-  },
-  "mb.registerFactoryParam": {
-    "prefix": "mb.registerFactoryParam",
-    "description": "Call registerFactoryParam(\r\n    T Function(P1 param1, P2 param2) factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerFactoryParam<T extends Object, P1, P2>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, dependsOn: ${4:const []}, onCreated: ${5:onCreated})"
-    ]
-  },
-  "mb.registerFactoryParamAsync": {
-    "prefix": "mb.registerFactoryParamAsync",
-    "description": "Call registerFactoryParamAsync(\r\n    Future<T> Function(P1 param1, P2 param2) factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerFactoryParamAsync<T extends Object, P1, P2>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, dependsOn: ${4:const []}, onCreated: ${5:onCreated})"
-    ]
-  },
-  "mb.registerLazySingleton": {
-    "prefix": "mb.registerLazySingleton",
-    "description": "Call registerLazySingleton(\r\n    T Function() factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    void Function(T instance)? onDispose,\r\n    bool signalsReady = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerLazySingleton<T extends Object>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, onDispose: ${4:onDispose}, signalsReady: ${5:false}, dependsOn: ${6:const []}, onCreated: ${7:onCreated})"
-    ]
-  },
-  "mb.registerLazySingletonAsync": {
-    "prefix": "mb.registerLazySingletonAsync",
-    "description": "Call registerLazySingletonAsync(\r\n    Future<T> Function() factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    void Function(T instance)? onDispose,\r\n    bool signalsReady = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n    BridgeRetryPolicy? retryPolicy,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerLazySingletonAsync<T extends Object>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, onDispose: ${4:onDispose}, signalsReady: ${5:false}, dependsOn: ${6:const []}, onCreated: ${7:onCreated}, retryPolicy: ${8:retryPolicy})"
-    ]
-  },
-  "mb.registerModule": {
-    "prefix": "mb.registerModule",
-    "description": "Call registerModule(\r\n    FeatureModule module, {\r\n    bool checkHealth = false,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerModule(${1:module}, checkHealth: ${2:false})"
-    ]
-  },
-  "mb.registerModules": {
-    "prefix": "mb.registerModules",
-    "description": "Call registerModules(\r\n    List<FeatureModule> modules, {\r\n    bool checkHealth = false,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerModules(${1:modules}, checkHealth: ${2:false})"
-    ]
-  },
-  "mb.registerSingleton": {
-    "prefix": "mb.registerSingleton",
-    "description": "Call registerSingleton(\r\n    T instance, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    void Function(T instance)? onDispose,\r\n    bool? signalsReady,\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerSingleton<T extends Object>(${1:instance}, instanceName: ${2:instanceName}, override: ${3:false}, onDispose: ${4:onDispose}, signalsReady: ${5:signalsReady}, onCreated: ${6:onCreated})"
-    ]
-  },
-  "mb.registerSingletonAsync": {
-    "prefix": "mb.registerSingletonAsync",
-    "description": "Call registerSingletonAsync(\r\n    Future<T> Function() factory, {\r\n    String? instanceName,\r\n    bool override = false,\r\n    void Function(T instance)? onDispose,\r\n    bool signalsReady = false,\r\n    Iterable<DependencyKey> dependsOn = const [],\r\n    void Function(T instance)? onCreated,\r\n    BridgeRetryPolicy? retryPolicy,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerSingletonAsync<T extends Object>(${1:factory}, instanceName: ${2:instanceName}, override: ${3:false}, onDispose: ${4:onDispose}, signalsReady: ${5:false}, dependsOn: ${6:const []}, onCreated: ${7:onCreated}, retryPolicy: ${8:retryPolicy})"
-    ]
-  },
-  "mb.registerSingletonWithDependencies": {
-    "prefix": "mb.registerSingletonWithDependencies",
-    "description": "Call registerSingletonWithDependencies({\r\n    required T Function(ModularBridge bridge) factoryFunc,\r\n    required Iterable<DependencyKey> dependsOn,\r\n    String? instanceName,\r\n    bool override = false,\r\n    bool signalsReady = false,\r\n    void Function(T instance)? onDispose,\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerSingletonWithDependencies<T extends Object>(factoryFunc: ${1:factoryFunc}, dependsOn: ${2:dependsOn}, instanceName: ${3:instanceName}, override: ${4:false}, signalsReady: ${5:false}, onDispose: ${6:onDispose}, onCreated: ${7:onCreated})"
-    ]
-  },
-  "mb.registerSingletonWithDependenciesAsync": {
-    "prefix": "mb.registerSingletonWithDependenciesAsync",
-    "description": "Call registerSingletonWithDependenciesAsync({\r\n    required FutureOr<T> Function(ModularBridge bridge) factoryFunc,\r\n    required Iterable<DependencyKey> dependsOn,\r\n    String? instanceName,\r\n    bool override = false,\r\n    bool signalsReady = false,\r\n    void Function(T instance)? onDispose,\r\n    void Function(T instance)? onCreated,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.registerSingletonWithDependenciesAsync<T extends Object>(factoryFunc: ${1:factoryFunc}, dependsOn: ${2:dependsOn}, instanceName: ${3:instanceName}, override: ${4:false}, signalsReady: ${5:false}, onDispose: ${6:onDispose}, onCreated: ${7:onCreated})"
-    ]
-  },
-  "mb.remove": {
-    "prefix": "mb.remove",
-    "description": "Call remove(String key)",
-    "scope": "dart",
-    "body": [
-      "config.remove(${1:key})"
-    ]
-  },
-  "mb.removeConfigValue": {
-    "prefix": "mb.removeConfigValue",
-    "description": "Call removeConfigValue(String key)",
-    "scope": "dart",
-    "body": [
-      "scope.removeConfigValue(${1:key})"
-    ]
-  },
-  "mb.removeEventInterceptor": {
-    "prefix": "mb.removeEventInterceptor",
-    "description": "Call removeEventInterceptor(BridgeEventInterceptor interceptor)",
-    "scope": "dart",
-    "body": [
-      "bridge.eventBus.removeEventInterceptor(${1:interceptor})"
-    ]
-  },
-  "mb.removeModuleDependencies": {
-    "prefix": "mb.removeModuleDependencies",
-    "description": "Call removeModuleDependencies(String moduleName)",
-    "scope": "dart",
-    "body": [
-      "scope.removeModuleDependencies(${1:moduleName})"
-    ]
-  },
-  "mb.removeResolutionInterceptor": {
-    "prefix": "mb.removeResolutionInterceptor",
-    "description": "Call removeResolutionInterceptor(BridgeResolutionInterceptor interceptor)",
-    "scope": "dart",
-    "body": [
-      "bridge.removeResolutionInterceptor(${1:interceptor})"
-    ]
-  },
-  "mb.resetInstance": {
-    "prefix": "mb.resetInstance",
-    "description": "Call resetInstance",
-    "scope": "dart",
-    "body": [
-      "ModularBridge.resetInstance()"
-    ]
-  },
-  "mb.resetLazySingleton": {
-    "prefix": "mb.resetLazySingleton",
-    "description": "Call resetLazySingleton({\r\n    String? instanceName,\r\n    bool disposeHooks = true,\r\n    FutureOr<void> Function(T instance)? disposingFunction,\r\n  })",
-    "scope": "dart",
-    "body": [
-      "bridge.resetLazySingleton<T extends Object>(instanceName: ${1:instanceName}, disposeHooks: ${2:true}, disposingFunction: ${3:disposingFunction})"
-    ]
-  },
-  "mb.resetLazySingletons": {
-    "prefix": "mb.resetLazySingletons",
-    "description": "Call resetLazySingletons({bool disposeHooks = true})",
-    "scope": "dart",
-    "body": [
-      "bridge.resetLazySingletons(disposeHooks: ${1:true})"
-    ]
-  },
-  "mb.resetMetrics": {
-    "prefix": "mb.resetMetrics",
-    "description": "Call resetMetrics",
-    "scope": "dart",
-    "body": [
-      "bridge.resetMetrics()"
-    ]
-  },
-  "mb.resetScope": {
-    "prefix": "mb.resetScope",
-    "description": "Call resetScope({bool disposeInstances = true})",
-    "scope": "dart",
-    "body": [
-      "bridge.resetScope(disposeInstances: ${1:true})"
-    ]
-  },
-  "mb.resolveTarget": {
-    "prefix": "mb.resolveTarget",
-    "description": "Call resolveTarget(DependencyInfo from, DependencyKey dep)",
-    "scope": "dart",
-    "body": [
-      "bridge.resolveTarget(${1:from}, ${2:dep})"
-    ]
-  },
-  "mb.seal": {
-    "prefix": "mb.seal",
+  "mb_scope_pushasync": {
+    "prefix": "mb_scope_pushasync",
+    "description": "pushNewScopeAsync — async init + scoped config override",
+    "scope": "dart",
+    "body": [
+      "await bridge.pushNewScopeAsync(",
+      "  scopeName: '${1:request}',",
+      "  init: (bridge) async {",
+      "    bridge.registerSingleton<${2:RequestContext}>(",
+      "      ${2:RequestContext}(${3:requestId}),",
+      "    );",
+      "    bridge.currentScope!.setConfigValue('tenant', '${4:acme}');",
+      "    ${5}",
+      "  },",
+      "  dispose: () async {",
+      "    ${6}",
+      "  },",
+      ");"
+    ]
+  },
+  "mb_seal": {
+    "prefix": "mb_seal",
     "description": "Call seal",
     "scope": "dart",
     "body": [
       "scope.seal()"
     ]
   },
-  "mb.set": {
-    "prefix": "mb.set",
+  "mb_set": {
+    "prefix": "mb_set",
     "description": "Call set(String key, dynamic value)",
     "scope": "dart",
     "body": [
       "config.set(${1:key}, ${2:value})"
     ]
   },
-  "mb.setAll": {
-    "prefix": "mb.setAll",
+  "mb_setAll": {
+    "prefix": "mb_setAll",
     "description": "Call setAll(Map<String, dynamic> values)",
     "scope": "dart",
     "body": [
-      "config.setAll(${1:String}, ${2:values})"
+      "config.setAll(${1:values})"
     ]
   },
-  "mb.setConfig": {
-    "prefix": "mb.setConfig",
+  "mb_setConfig": {
+    "prefix": "mb_setConfig",
     "description": "Call setConfig(BridgeConfig newConfig)",
     "scope": "dart",
     "body": [
       "bridge.setConfig(${1:newConfig})"
     ]
   },
-  "mb.setConfigValue": {
-    "prefix": "mb.setConfigValue",
+  "mb_setConfigValue": {
+    "prefix": "mb_setConfigValue",
     "description": "Call setConfigValue(String key, dynamic value)",
     "scope": "dart",
     "body": [
       "scope.setConfigValue(${1:key}, ${2:value})"
     ]
   },
-  "mb.setMockInstance": {
-    "prefix": "mb.setMockInstance",
+  "mb_setMockInstance": {
+    "prefix": "mb_setMockInstance",
     "description": "Call setMockInstance(ModularBridge bridge)",
     "scope": "dart",
     "body": [
       "ModularBridge.setMockInstance(${1:bridge})"
     ]
   },
-  "mb.signalReady": {
-    "prefix": "mb.signalReady",
+  "mb_signalReady": {
+    "prefix": "mb_signalReady",
     "description": "Call signalReady([Object? instance])",
     "scope": "dart",
     "body": [
-      "bridge.signalReady(${1:arg})"
+      "bridge.signalReady()"
     ]
   },
-  "mb.snapshot": {
-    "prefix": "mb.snapshot",
+  "mb_singleton": {
+    "prefix": "mb_singleton",
+    "description": "singleton — short alias for registerSingleton",
+    "scope": "dart",
+    "body": [
+      "bridge.singleton<${1:Service}>(${1:Service}());"
+    ]
+  },
+  "mb_snapshot": {
+    "prefix": "mb_snapshot",
     "description": "Call snapshot",
     "scope": "dart",
     "body": [
       "bridge.metrics.snapshot()"
     ]
   },
-  "mb.switchEnvironment": {
-    "prefix": "mb.switchEnvironment",
-    "description": "Call switchEnvironment(\r\n    BridgeEnvironment newEnvironment, {\r\n    Map<String, dynamic>? runtimeOverrides,\r\n  })",
+  "mb_switchEnvironment": {
+    "prefix": "mb_switchEnvironment",
+    "description": "Call switchEnvironment(BridgeEnvironment newEnvironment, { Map<String, dynamic>? runtimeOverrides, })",
     "scope": "dart",
     "body": [
-      "config.switchEnvironment(${1:newEnvironment}, String: ${2:String}, runtimeOverrides: ${3:runtimeOverrides})"
+      "config.switchEnvironment(${1:newEnvironment})"
     ]
   },
-  "mb.toDot": {
-    "prefix": "mb.toDot",
+  "mb_test": {
+    "prefix": "mb_test",
+    "description": "Isolated bridge for unit/widget tests",
+    "scope": "dart",
+    "body": [
+      "final bridge = ModularBridge.createIsolated(",
+      "  config: BridgeConfig(environment: BridgeEnvironment.dev),",
+      ");",
+      "addTearDown(bridge.dispose);",
+      "",
+      "bridge.registerSingleton<${1:Service}>(${1:Service}());",
+      "final service = bridge.get<${1:Service}>();"
+    ]
+  },
+  "mb_timing": {
+    "prefix": "mb_timing",
+    "description": "Call timing(void Function(BridgeResolutionTiming timing) onTiming,)",
+    "scope": "dart",
+    "body": [
+      "BridgeInterceptors.timing(${1:onTiming})"
+    ]
+  },
+  "mb_toDot": {
+    "prefix": "mb_toDot",
     "description": "Call toDot",
     "scope": "dart",
     "body": [
       "bridge.dependencyGraph().toDot()"
     ]
   },
-  "mb.tryGetAsync": {
-    "prefix": "mb.tryGetAsync",
+  "mb_transient": {
+    "prefix": "mb_transient",
+    "description": "Call transient(T Function() factory, { String? instanceName, bool override = false, Iterable<Dependenc...)",
+    "scope": "dart",
+    "body": [
+      "bridge.transient<T>(${1:factory})"
+    ]
+  },
+  "mb_tryGetAsync": {
+    "prefix": "mb_tryGetAsync",
     "description": "Call tryGetAsync({String? instanceName})",
     "scope": "dart",
     "body": [
-      "bridge.tryGetAsync<T extends Object>(instanceName: ${1:instanceName})"
+      "bridge.tryGetAsync<T>()"
     ]
   },
-  "mb.tryGetModule": {
-    "prefix": "mb.tryGetModule",
+  "mb_tryGetModule": {
+    "prefix": "mb_tryGetModule",
     "description": "Call tryGetModule",
     "scope": "dart",
     "body": [
-      "bridge.tryGetModule<M extends FeatureModule>()"
+      "bridge.tryGetModule<M>()"
     ]
   },
-  "mb.unregister": {
-    "prefix": "mb.unregister",
-    "description": "Call unregister({\r\n    String? instanceName,\r\n    bool throwOnMissing = false,\r\n  })",
+  "mb_tryget": {
+    "prefix": "mb_tryget",
+    "description": "Optional resolution — null when not registered",
     "scope": "dart",
     "body": [
-      "bridge.unregister<T extends Object>(instanceName: ${1:instanceName}, throwOnMissing: ${2:false})"
+      "final ${1:Service}? ${2:service} = bridge.tryGet<${1:Service}>();"
     ]
   },
-  "mb.unregisterModule": {
-    "prefix": "mb.unregisterModule",
-    "description": "Call unregisterModule(\r\n      {bool force = false})",
+  "mb_unregister": {
+    "prefix": "mb_unregister",
+    "description": "Call unregister({ String? instanceName, bool throwOnMissing = false, })",
     "scope": "dart",
     "body": [
-      "bridge.unregisterModule<M extends FeatureModule>(force: ${1:false})"
+      "bridge.unregister<T>()"
     ]
   },
-  "mb.unregisterModuleByName": {
-    "prefix": "mb.unregisterModuleByName",
-    "description": "Call unregisterModuleByName(String moduleName,\r\n      {bool force = false})",
+  "mb_unregisterModule": {
+    "prefix": "mb_unregisterModule",
+    "description": "Call unregisterModule({bool force = false})",
     "scope": "dart",
     "body": [
-      "bridge.unregisterModuleByName(${1:moduleName}, force: ${2:false})"
+      "bridge.unregisterModule<M>()"
+    ]
+  },
+  "mb_unregisterModuleByName": {
+    "prefix": "mb_unregisterModuleByName",
+    "description": "Call unregisterModuleByName(String moduleName, {bool force = false})",
+    "scope": "dart",
+    "body": [
+      "bridge.unregisterModuleByName(${1:moduleName})"
+    ]
+  },
+  "mb_unregistered": {
+    "prefix": "mb_unregistered",
+    "description": "Unregister a module / dependency",
+    "scope": "dart",
+    "body": [
+      "await bridge.unregisterModule<${1:FeatureModule}>${2|, force: true|}();"
+    ]
+  },
+  "mb_unstackScope": {
+    "prefix": "mb_unstackScope",
+    "description": "Call unstackScope(BridgeScope scope)",
+    "scope": "dart",
+    "body": [
+      "bridge.unstackScope(${1:scope})"
+    ]
+  },
+  "mb_warmup": {
+    "prefix": "mb_warmup",
+    "description": "Eagerly resolve all singleton-style registrations",
+    "scope": "dart",
+    "body": [
+      "await bridge.warmup();"
     ]
   }
 }

@@ -28,4 +28,3 @@ final class UserLoggedOutEvent extends AuthEvent {
   @override
   String toString() => 'UserLoggedOutEvent(userId: $userId)';
 }
-

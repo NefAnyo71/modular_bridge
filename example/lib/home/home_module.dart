@@ -37,9 +37,9 @@ final class HomeModule extends FeatureModule {
 
     // Listen to UserLoggedOutEvent to clean state
     subscribe<UserLoggedOutEvent>(bridge, (event) {
-      logger.log('[HomeModule] Received UserLoggedOutEvent. Clearing home feed.');
+      logger
+          .log('[HomeModule] Received UserLoggedOutEvent. Clearing home feed.');
       controller.clearFeed();
     });
   }
 }
-

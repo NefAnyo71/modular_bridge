@@ -1,7 +1,5 @@
-import 'package:material_ui/material_ui.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
+import 'package:modular_bridge/modular_bridge.dart';
 import 'package:modular_bridge_example/analytics/analytics_module.dart';
 import 'package:modular_bridge_example/auth/auth_module.dart';
 import 'package:modular_bridge_example/cart/cart_module.dart';
@@ -15,15 +13,12 @@ void main() {
     ModularBridge.resetInstance();
   });
 
-  testWidgets(
-      'Example app boots and renders ModularBridge Showcase with all tabs',
-      (WidgetTester tester) async {
+  testWidgets('Example app boots and renders all tabs', (tester) async {
     final config = BridgeConfig(
       environment: BridgeEnvironment.dev,
       environmentValues: {
         BridgeEnvironment.dev: {
-          'apiBaseUrl': 'https://dev.api.modularbridge.io',
-          'apiTimeout': const Duration(seconds: 15),
+          'api': {'baseUrl': 'https://dev.api.test', 'timeoutMs': 5000},
           'enableBiometrics': false,
           'retryCount': 3,
         },
@@ -38,32 +33,36 @@ void main() {
       HomeModule(),
       CartModule(),
     ]);
+    // NB: warmup() is skipped here — it awaits the eager SessionStore's
+    // Future.delayed, which never fires inside the fake-async test zone.
 
-    await tester.pumpWidget(
-      const ProviderScope(
-        child: ModularBridgeProvider(
-          child: ModularBridgeExampleApp(),
-        ),
-      ),
-    );
+    await tester.pumpWidget(const ModularBridgeExampleApp());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('ModularBridge Architecture'), findsOneWidget);
+    expect(find.text('ModularBridge'), findsOneWidget);
     expect(find.text('DEV'), findsWidgets);
 
-    // Switch to Event Console tab
-    await tester.tap(find.byIcon(Icons.terminal_outlined));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Event Bus Stream'), findsOneWidget);
+    // Events tab
+    await tester.tap(find.text('Events'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('Event Bus'), findsOneWidget);
 
-    // Switch to Module Inspector tab
-    await tester.tap(find.byIcon(Icons.layers_outlined));
-    await tester.pumpAndSettle();
+    // Inspector tab — module cards live in a lazy ListView, scroll to them.
+    await tester.tap(find.text('Inspector'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('CoreModule'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('CartModule'), 200);
+    await tester.pump();
     expect(find.text('CartModule'), findsOneWidget);
-    expect(find.text('AnalyticsModule'), findsOneWidget);
+    expect(find.text('HomeModule'), findsOneWidget);
 
-    // Switch to Config Studio tab
-    await tester.tap(find.byIcon(Icons.tune_outlined));
-    await tester.pumpAndSettle();
-    expect(find.text('Runtime Flavor Hot-Switching'), findsOneWidget);
+    // Config tab
+    await tester.tap(find.text('Config'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Runtime flavor hot-switching'), findsOneWidget);
   });
 }

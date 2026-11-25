@@ -3,6 +3,16 @@
 > it went live. No harm done: the release is complete, documented, and fully
 > tested (285 tests). This entry and `0.12.0` below are the intended content.
 
+## 0.13.0
+
+* **`Lazy<T>`**: deferred dependency handle for breaking circular dependencies — `bridge.lazy<T>()`, `scope.lazy<T>()`, or `new Lazy<T>(bridge)` resolve through the normal lookup path (including scope chains and named instances) only when `.value`/`.resolveAsync()` is accessed.
+* **`callAsync`**: async counterpart of the `call` syntax — `await bridge.callAsync<T>()` and `await scope.callAsync<T>()`.
+* **`FeatureModule.warmup(bridge)`**: optional startup hook invoked by `ModularBridge.warmup()` after owned dependencies resolve; `warmup(ownerModule:)` runs only that module's hook.
+* **`dependencyEventHistory({count})`**: replay-then-live stream over the bounded (200-event) dependency registration history — same sequence-guarded semantics as `BridgeEventBus.history`.
+* **Short registration aliases**: `singleton`, `lazySingleton`, `transient`, `asyncSingleton`, and `bind` (config binding) on both `ModularBridge` and `BridgeScope` — identical signatures to their `register*` counterparts, for the common cases where the shorter name reads better.
+* **`bridge.subscribe` options**: `onError`, `onDone`, and `cancelOnError` are now forwarded to the underlying event-bus subscription (previously only `ownerId` was exposed).
+* **Annotation exports**: `immutable`, `mustCallSuper`, `protected`, and `visibleForTesting` are now exported from `package:modular_bridge` so module authors can annotate overrides without importing `package:meta` or internal `src/` paths.
+
 ## 0.12.0
 
 * **Fix — stacked scope lock-up**: disposing a `BridgeScope` that sits on the active scope stack (without `popScope`/`dropScope`) now removes it from the stack via `unstackScope`, so `currentScope` can no longer return a disposed scope and lock every subsequent resolution. Child scopes are still disposed with their parent.

@@ -6,7 +6,7 @@
 //   dart run generate_snippets.dart [--out <path>]
 //
 // Copy the generated file into your project's `.vscode/` directory (or your
-// user snippets folder) to activate the `mb.*` snippets.
+// user snippets folder) to activate the `mb_*` snippets.
 
 import 'dart:convert';
 import 'dart:io';
@@ -19,6 +19,35 @@ import 'dart:io';
 typedef SnippetDef = ({String description, List<String> body});
 
 const Map<String, SnippetDef> curated = {
+  'mb.quickstart': (
+    description: 'Minimal app bootstrap — config + modules + runApp',
+    body: [
+      'Future<void> main() async {',
+      '  WidgetsFlutterBinding.ensureInitialized();',
+      '',
+      '  final bridge = ModularBridge.I;',
+      '  bridge.setConfig(await BridgeConfig.fromAsset(',
+      "    'assets/config.json',",
+      '    loader: rootBundle.loadString,',
+      '  ));',
+      '  await bridge.registerModules([CoreModule(), AuthModule()]);',
+      '',
+      '  runApp(const MyApp());',
+      '}',
+    ],
+  ),
+  'mb.test': (
+    description: 'Isolated bridge for unit/widget tests',
+    body: [
+      'final bridge = ModularBridge.createIsolated(',
+      '  config: BridgeConfig(environment: BridgeEnvironment.dev),',
+      ');',
+      'addTearDown(bridge.dispose);',
+      '',
+      'bridge.registerSingleton<\${1:Service}>(\${1:Service}());',
+      'final service = bridge.get<\${1:Service}>();',
+    ],
+  ),
   'mb.module': (
     description: 'FeatureModule — full module skeleton',
     body: [
@@ -45,6 +74,20 @@ const Map<String, SnippetDef> curated = {
       '  @override',
       '  FutureOr<bool> healthCheck(ModularBridge bridge) async {',
       '    return true;',
+      '  }',
+      '}',
+    ],
+  ),
+  'mb.module.core': (
+    description: 'CoreModule — base services module skeleton',
+    body: [
+      'final class CoreModule extends FeatureModule {',
+      '  @override',
+      "  String get name => 'CoreModule';",
+      '',
+      '  @override',
+      '  FutureOr<void> registerDependencies(ModularBridge bridge) async {',
+      '    bridge.registerLazySingleton<\${1:AuthService}>(() => \${1:AuthService}());',
       '  }',
       '}',
     ],
@@ -91,7 +134,7 @@ const Map<String, SnippetDef> curated = {
   'mb.event.publish': (
     description: 'Publish an event on the bridge event bus',
     body: [
-      'bridge.eventBus.publish(\${1:MyEvent()}\${2});',
+      'bridge.publish(\${1:MyEvent()});',
     ],
   ),
   'mb.event.subscribe': (
@@ -159,7 +202,7 @@ const Map<String, SnippetDef> curated = {
   'mb.config.get': (
     description: 'Typed config read with default',
     body: [
-      'final \${1:String} \${2:value} = config.get\${3|String,int,double,bool,Duration,Uri|}(\'\${4:key}\'\${5:, defaultValue: \${6}});',
+      'final \${1:String} \${2:value} = config.get\${3|String,int,double,bool,Duration,Uri|}(\'\${4:key}\'\${5:, defaultValue: \${6:null}});',
     ],
   ),
   'mb.config.switch': (
@@ -171,9 +214,9 @@ const Map<String, SnippetDef> curated = {
   'mb.config.binding': (
     description: 'registerConfigBinding — dependency rebuilt on config change',
     body: [
-      'bridge.registerConfigBinding<ApiConfig>(',
-      "  configKey: '\${1:api}',",
-      '  decoder: (value) => ApiConfig.fromMap(value as Map<String, dynamic>),',
+      'bridge.registerConfigBinding<\${1:AppConfig}>(',
+      "  configKey: '\${2:api}',",
+      '  decoder: (value) => \${1:AppConfig}.fromMap(value as Map<String, dynamic>),',
       ');',
     ],
   ),
@@ -199,13 +242,18 @@ const Map<String, SnippetDef> curated = {
       'bridge.registerSingleton<\${1:Service}>(\${1:Service}()\${2:, onDispose: (s) => s.dispose()});',
     ],
   ),
+  'mb.singleton': (
+    description: 'singleton — short alias for registerSingleton',
+    body: [
+      'bridge.singleton<\${1:Service}>(\${1:Service}());',
+    ],
+  ),
   'mb.register.lazy': (
     description: 'registerLazySingleton — created on first get<T>()',
     body: [
       'bridge.registerLazySingleton<\${1:Repository}>(',
       '  () => \${1:Repository}Impl(\${2:bridge.get<Dependency>()}),',
-      '  instanceName: \'\${3}\',',
-      '  dependsOn: [dep<\${4:Dependency}>()],',
+      '  dependsOn: [dep<\${3:Dependency}>()],',
       ');',
     ],
   ),
@@ -283,6 +331,58 @@ const Map<String, SnippetDef> curated = {
       'bridge.override<\${1:Service}>(\${2:mockService}\${3:, instanceName: \'name\'});',
     ],
   ),
+  'mb.lazy': (
+    description: 'Lazy<T> — deferred dependency for circular deps',
+    body: [
+      'final lazy = bridge.lazy<\${1:Service}>();',
+      'final value = lazy.value; // or: await lazy.resolveAsync()',
+    ],
+  ),
+  'mb.lazy.scoped': (
+    description: 'Lazy<T> bound to a BridgeScope hierarchy',
+    body: [
+      'final lazy = scope.lazy<\${1:Service}>();',
+      'final value = lazy.value;',
+    ],
+  ),
+  'mb.dep': (
+    description: 'dep<T>() — DependencyKey shorthand for dependsOn lists',
+    body: [
+      'dep<\${1:Service}>()',
+    ],
+  ),
+  'mb.dep.named': (
+    description: 'dep<T>(\'name\') — named DependencyKey shorthand',
+    body: [
+      'dep<\${1:Service}>(\'\${2:name}\')',
+    ],
+  ),
+  'mb.module.warmup': (
+    description: 'FeatureModule.warmup — hook after owned deps resolve',
+    body: [
+      '@override',
+      'void warmup(ModularBridge bridge) {',
+      '  \${1}',
+      '}',
+    ],
+  ),
+  'mb.module.healthcheck': (
+    description: 'FeatureModule.healthCheck — module health probe',
+    body: [
+      '@override',
+      'Future<bool> healthCheck(ModularBridge bridge) async {',
+      '  \${1:return true;}',
+      '}',
+    ],
+  ),
+  'mb.module.environments': (
+    description: 'FeatureModule.environments — env allow-list',
+    body: [
+      '@override',
+      'List<BridgeEnvironment>? get environments =>',
+      '    const [BridgeEnvironment.dev, BridgeEnvironment.staging];',
+    ],
+  ),
   'mb.isolated': (
     description: 'Create an isolated bridge for tests',
     body: [
@@ -320,6 +420,24 @@ const Map<String, SnippetDef> curated = {
       ');',
     ],
   ),
+  'mb.scope.pushasync': (
+    description: 'pushNewScopeAsync — async init + scoped config override',
+    body: [
+      'await bridge.pushNewScopeAsync(',
+      "  scopeName: '\${1:request}',",
+      '  init: (bridge) async {',
+      '    bridge.registerSingleton<\${2:RequestContext}>(',
+      '      \${2:RequestContext}(\${3:requestId}),',
+      '    );',
+      "    bridge.currentScope!.setConfigValue('tenant', '\${4:acme}');",
+      '    \${5}',
+      '  },',
+      '  dispose: () async {',
+      '    \${6}',
+      '  },',
+      ');',
+    ],
+  ),
   'mb.allready': (
     description: 'Await all readiness-tracked dependencies',
     body: [
@@ -346,7 +464,7 @@ const Map<String, SnippetDef> curated = {
       'final results = await bridge.checkModuleHealth();',
       'for (final r in results.where((r) => !r.isHealthy)) {',
       '  reportBridgeError(r.error ?? StateError(\'unhealthy\'), StackTrace.current,',
-      "    context: 'Module \${r.moduleName} unhealthy');",
+      "    context: 'Module \\\${r.moduleName} unhealthy');",
       '}',
     ],
   ),
@@ -379,9 +497,9 @@ const Map<String, SnippetDef> curated = {
       'bridge.addResolutionInterceptor(',
       '  (request, next) {',
       '    final sw = Stopwatch()..start();',
-      "    developer.log('Resolving \${request.type}', name: 'modular_bridge');",
+      "    developer.log('Resolving \\\${request.type}', name: 'modular_bridge');",
       '    final result = next();',
-      "    developer.log('Resolved in \${sw.elapsedMilliseconds}ms', name: 'modular_bridge');",
+      "    developer.log('Resolved in \\\${sw.elapsedMilliseconds}ms', name: 'modular_bridge');",
       '    return result;',
       '  },',
       ');',
@@ -422,11 +540,9 @@ final _topLevelFnRe = RegExp(
 final Set<String> skippedFiles = {
   'dependency_descriptor.dart',
   'resolution_context.dart',
-  'resolution_interceptor.dart',
   'dependency_event.dart',
   'annotations.dart',
   'feature_module.dart',
-  'bridge_subscription.dart',
 };
 
 /// Return-type tokens that indicate an in-body call site (`await foo()`),
@@ -478,6 +594,7 @@ final Set<String> allowedDotReceivers = {
 /// Public classes that should not get an instantiation snippet.
 final Set<String> skipClasses = {
   'BridgeScope', // internal constructor — use createScope/pushNewScope
+  'BridgeSubscription', // internal constructor — obtained via subscribe()
 };
 
 /// Public method names on internal helper types that are noise as snippets.
@@ -519,26 +636,48 @@ final Set<String> denylistedMethods = {
   'i',
 };
 
+/// Members of secondary classes in a multi-class file need their own
+/// receiver — e.g. `BridgeDiagnosticsReport.isHealthy` is not on the bridge.
+String receiverForMember(String fileName, String className) {
+  if (fileName.contains('modular_bridge_container') &&
+      className == 'BridgeDiagnosticsReport') {
+    return 'bridge.diagnosticsReport()';
+  }
+  if (fileName.contains('bridge_subscription') &&
+      className == 'BridgeSubscription') {
+    return 'subscription';
+  }
+  return receiverFor(fileName);
+}
+
 /// Receiver expression for `static` members, keyed by file name.
 String? staticReceiverFor(String fileName) {
   if (fileName.contains('bridge_config')) return 'BridgeConfig';
   if (fileName.contains('bridge_environment')) return 'BridgeEnvironment';
   if (fileName.contains('modular_bridge_container')) return 'ModularBridge';
   if (fileName.contains('event_bus')) return 'BridgeEventBus';
+  if (fileName.contains('dependency_graph')) return 'BridgeDependencyGraph';
   if (fileName.contains('bridge_scope')) return 'BridgeScope';
+  if (fileName.contains('resolution_interceptor')) {
+    return 'BridgeInterceptors';
+  }
   return null;
 }
 
 /// Chooses the receiver expression for auto-generated call snippets based
 /// on which source file declared the member.
 String receiverFor(String fileName) {
-  if (fileName.contains('bridge_environment')) return 'BridgeEnvironment.dev';
+  if (fileName.contains('bridge_environment')) return 'environment';
   if (fileName.contains('bridge_config')) return 'config';
   if (fileName.contains('env_file')) return '';
-  if (fileName.contains('event_bus')) return 'bridge.eventBus';
+  if (fileName.contains('event_bus')) {
+    // bridge_event_bus.dart -> bus calls; bridge_event.dart -> event members.
+    return fileName == 'bridge_event.dart' ? 'event' : 'bridge.eventBus';
+  }
   if (fileName.contains('dependency_graph')) return 'bridge.dependencyGraph()';
   if (fileName.contains('dependency_metrics')) return 'bridge.metrics';
   if (fileName.contains('bridge_scope')) return 'scope';
+  if (fileName.contains('lazy')) return 'lazy';
   if (fileName.contains('container') ||
       fileName.contains('modular_bridge_container')) {
     return 'bridge';
@@ -562,9 +701,9 @@ List<String> splitTopLevel(String text) {
     }
     if (ch == "'" || ch == '"') {
       quote = ch;
-    } else if (ch == '(' || ch == '[' || ch == '{') {
+    } else if (ch == '(' || ch == '[' || ch == '{' || ch == '<') {
       depth++;
-    } else if (ch == ')' || ch == ']' || ch == '}') {
+    } else if (ch == ')' || ch == ']' || ch == '}' || ch == '>') {
       depth--;
     } else if (ch == ',' && depth == 0) {
       parts.add(text.substring(start, i).trim());
@@ -578,16 +717,60 @@ List<String> splitTopLevel(String text) {
 
 /// Extracts the parameter name (and optional default) from one parameter
 /// segment like `required String? instanceName` or `bool override = false`.
-({String name, String? defaultValue}) parseParam(String segment) {
+({String name, String? defaultValue, bool required}) parseParam(
+    String segment) {
   var s = segment.trim();
-  if (s.startsWith('required ')) s = s.substring('required '.length);
+  final isRequired = s.startsWith('required ');
+  if (isRequired) s = s.substring('required '.length);
   // Strip a leading type — take the last identifier before '=' or end.
   final eq = s.indexOf('=');
   final head = eq >= 0 ? s.substring(0, eq).trim() : s;
   final def = eq >= 0 ? s.substring(eq + 1).trim() : null;
   final nameMatch = RegExp(r'([A-Za-z_]\w*)\s*$').firstMatch(head);
   final name = nameMatch?.group(1) ?? 'arg';
-  return (name: name, defaultValue: def);
+  return (name: name, defaultValue: def, required: isRequired);
+}
+
+/// Strips bounds/constraints from a generic parameter list so it is valid
+/// at a call site: `<T extends Object>` -> `<T>`, `<T, P1>` -> `<T, P1>`.
+String sanitizeGenerics(String generics) {
+  if (generics.isEmpty || generics == '<>') return '';
+  final inner = generics.substring(1, generics.length - 1);
+  final names = splitTopLevel(inner).map((p) {
+    // Drop `extends`/`super` constraints — only the bare name is legal
+    // in a type-argument list.
+    final first = p.trim().split(RegExp(r'\s+')).first;
+    return first;
+  }).where((n) => n.isNotEmpty);
+  final list = names.toList();
+  return list.isEmpty ? '' : '<${list.join(', ')}>';
+}
+
+/// Index of the first top-level `[` inside [text] (optional positional
+/// parameter block), or -1. Tracks paren/bracket/brace depth and strings.
+int topLevelBracketIndex(String text) {
+  var depth = 0;
+  var quote = '';
+  for (var i = 0; i < text.length; i++) {
+    final ch = text[i];
+    if (quote.isNotEmpty) {
+      if (ch == quote && text[i - 1] != r'\') quote = '';
+      continue;
+    }
+    if (ch == "'" || ch == '"') {
+      quote = ch;
+    } else if (ch == '(' || ch == '{') {
+      depth++;
+    } else if (ch == ')' || ch == '}') {
+      depth--;
+    } else if (ch == '[') {
+      if (depth == 0) return i;
+      depth++;
+    } else if (ch == ']') {
+      depth--;
+    }
+  }
+  return -1;
 }
 
 /// Builds the argument list for an auto-generated call snippet.
@@ -625,20 +808,30 @@ List<String> buildArgs(String signatureInner, int startIndex) {
           braceStart + 1, signatureInner.lastIndexOf('}'))
       : '';
 
-  for (final seg in splitTopLevel(positionalText)) {
+  // Optional positional parameters (`[a, b]`) are dropped — a call-site
+  // snippet cannot express "sometimes omit", and emitting them would
+  // reference variables the user never defined.
+  final bracketIndex = topLevelBracketIndex(positionalText);
+  final requiredPositional = bracketIndex >= 0
+      ? positionalText.substring(0, bracketIndex)
+      : positionalText;
+
+  for (final seg in splitTopLevel(requiredPositional)) {
     if (seg.isEmpty) continue;
     final p = parseParam(seg);
     args.add('\${$index:${p.name}}');
     index++;
   }
+  // Minimal-call philosophy: only REQUIRED parameters are emitted. Every
+  // optional named parameter (`{int? x}`, `{bool flag = false}`) is omitted —
+  // the full signature stays visible in the snippet description, and users
+  // add options only when they need them. Keeps inserted code short.
   if (namedText.isNotEmpty) {
     for (final seg in splitTopLevel(namedText)) {
       if (seg.isEmpty) continue;
       final p = parseParam(seg);
-      final def = p.defaultValue;
-      args.add(def != null
-          ? '${p.name}: \${$index:$def}'
-          : '${p.name}: \${$index:${p.name}}');
+      if (!p.required) continue;
+      args.add('${p.name}: \${$index:${p.name}}');
       index++;
     }
   }
@@ -688,9 +881,13 @@ void main(List<String> args) {
 
   void add(String prefix, String description, List<String> body,
       [String scope = 'dart']) {
-    if (!seenPrefixes.add(prefix)) return;
-    snippets[prefix] = {
-      'prefix': prefix,
+    // `mb.` prefixes cannot be typed through the dot — VS Code treats `.`
+    // as member access and kills the suggestion list. `_` is a word
+    // character, so `mb_name` filters cleanly while typing.
+    final p = prefix.replaceAll('.', '_');
+    if (!seenPrefixes.add(p)) return;
+    snippets[p] = {
+      'prefix': p,
       'description': description,
       'scope': scope,
       'body': body,
@@ -721,9 +918,13 @@ void main(List<String> args) {
     if (skippedFiles.contains(fileName)) continue;
     final src = file.readAsStringSync();
     final lines = src.split('\n');
-    final receiver = receiverFor(fileName);
     final isTopLevel =
         fileName == 'env_file.dart' || fileName == 'bridge_error_reporter.dart';
+    // Members declared inside a private (`_Foo`) class are implementation
+    // details — skip them so snippets never reference `bridge.metrics.entry`
+    // style internals that do not exist on the public API.
+    var inPrivateClass = false;
+    var currentClassName = '';
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
@@ -733,22 +934,44 @@ void main(List<String> args) {
       if (classMatch != null) {
         final kind = classMatch.group(1)!;
         final name = classMatch.group(2)!;
+        if (!isTopLevel) {
+          inPrivateClass = name.startsWith('_');
+          currentClassName = name;
+        }
         if (name.startsWith('_')) continue;
         if (kind == 'enum' || kind == 'mixin') continue;
         final isAbstract = line.contains('abstract');
         final isSealed = line.contains('sealed');
         if (isAbstract || isSealed || skipClasses.contains(name)) continue;
-        add(
-          'mb.new.$name',
-          'Instantiate $name',
-          ['$name(\${1})'],
+        // Locate the public unnamed constructor (`Name(...)`, `const Name(`,
+        // `factory Name(`) to build a signature-accurate snippet. Scans the
+        // rest of the file but stops at the next class declaration.
+        String? ctorSig;
+        final ctorRe = RegExp(
+          '^\\s*(?:(?:const|factory)\\s+)*$name\\s*\\(',
         );
+        for (var j = i + 1; j < lines.length; j++) {
+          if (j > i + 1 && _classRe.hasMatch(lines[j])) break;
+          if (!ctorRe.hasMatch(lines[j])) continue;
+          final lineStart = src.indexOf(lines[j]);
+          final openParen = lineStart >= 0 ? src.indexOf('(', lineStart) : -1;
+          ctorSig = openParen >= 0 ? extractSignature(src, openParen) : null;
+          break;
+        }
+        if (ctorSig != null) {
+          final args = buildArgs(ctorSig, 1);
+          final call = args.isEmpty ? '$name()' : '$name(${args.join(', ')})';
+          add('mb.new.$name', 'Instantiate $name', [call]);
+        } else {
+          // No explicit constructor — implicit public default.
+          add('mb.new.$name', 'Instantiate $name', ['$name()']);
+        }
         continue;
       }
 
       // Methods (skip inside skipped files already handled above).
       final methodMatch = _methodRe.firstMatch(line);
-      if (methodMatch != null && !isTopLevel) {
+      if (methodMatch != null && !isTopLevel && !inPrivateClass) {
         final retType = methodMatch.group(1)!.trim();
         final retFirstWord = retType.split(RegExp(r'\s+')).first;
         if (keywordTypes.contains(retFirstWord.toLowerCase())) continue;
@@ -763,7 +986,7 @@ void main(List<String> args) {
         }
         // Resolve the effective call receiver for dotted names.
         String? dottedReceiver;
-        var effectiveReceiver = receiver;
+        var effectiveReceiver = receiverForMember(fileName, currentClassName);
         final isStaticMember = line.trimLeft().startsWith('static ');
         if (isStaticMember) {
           effectiveReceiver = staticReceiverFor(fileName) ?? '';
@@ -785,7 +1008,7 @@ void main(List<String> args) {
         final openParen = lineStart >= 0 ? src.indexOf('(', lineStart) : -1;
         final sig = openParen >= 0 ? extractSignature(src, openParen) : null;
         if (sig == null) continue;
-        final generics = methodMatch.group(3) ?? '';
+        final generics = sanitizeGenerics(methodMatch.group(3) ?? '');
         final args = buildArgs(sig, 1);
         final call = args.isEmpty
             ? '$effectiveName$generics()'
@@ -795,9 +1018,13 @@ void main(List<String> args) {
             : (effectiveReceiver.isEmpty ? '' : '$effectiveReceiver.');
         final bodyCall = '$recvPrefix$call';
         final prefix = 'mb.$name';
+        // Keep the description readable — collapse whitespace and cap length.
+        final flatSig = sig.replaceAll(RegExp(r'\s+'), ' ').trim();
+        final shortSig =
+            flatSig.length > 90 ? '${flatSig.substring(0, 87)}...' : flatSig;
         add(
           prefix,
-          'Call $rawName${sig.isEmpty ? '' : '($sig)'}',
+          'Call $rawName${shortSig.isEmpty ? '' : '($shortSig)'}',
           [bodyCall],
         );
         continue;
@@ -805,7 +1032,7 @@ void main(List<String> args) {
 
       // Getters.
       final getterMatch = _getterRe.firstMatch(line);
-      if (getterMatch != null) {
+      if (getterMatch != null && !inPrivateClass) {
         final name = getterMatch.group(1)!;
         final nameLower = name.toLowerCase();
         if (name.startsWith('_') ||
@@ -815,7 +1042,7 @@ void main(List<String> args) {
         }
         final getterReceiver = line.trimLeft().startsWith('static ')
             ? (staticReceiverFor(fileName) ?? '')
-            : receiver;
+            : receiverForMember(fileName, currentClassName);
         final recvPrefix = getterReceiver.isEmpty ? '' : '$getterReceiver.';
         add(
           'mb.get.$name',
@@ -840,7 +1067,7 @@ void main(List<String> args) {
           final openParen = lineStart >= 0 ? src.indexOf('(', lineStart) : -1;
           final sig = openParen >= 0 ? extractSignature(src, openParen) : null;
           if (sig == null) continue;
-          final generics = fnMatch.group(2) ?? '';
+          final generics = sanitizeGenerics(fnMatch.group(2) ?? '');
           final args = buildArgs(sig, 1);
           final call = args.isEmpty
               ? '$name$generics()'
@@ -860,12 +1087,83 @@ void main(List<String> args) {
       return a.compareTo(b);
     });
 
-  final output = <String, Object?>{
-    for (final key in sortedKeys) key: snippets[key],
+  final output = <String, Map<String, Object?>>{
+    for (final key in sortedKeys) key: snippets[key]!,
   };
 
   File(outPath).writeAsStringSync(
     '${const JsonEncoder.withIndent('  ').convert(output)}\n',
   );
-  stdout.writeln('Generated ${snippets.length} snippets -> $outPath');
+
+  // Documentation: one markdown page covering every snippet.
+  final docsPath = '$scriptDir\\SNIPPETS.md';
+  File(docsPath).writeAsStringSync(buildDocsMarkdown(output, sortedKeys));
+
+  stdout.writeln(
+      'Generated ${snippets.length} snippets -> $outPath (+ $docsPath)');
+}
+
+/// Renders [snippets] as a markdown reference page.
+String buildDocsMarkdown(
+  Map<String, Map<String, Object?>> snippets,
+  List<String> sortedKeys,
+) {
+  String esc(String s) => s.replaceAll('`', '\\`');
+
+  String bodyOf(String key) {
+    final body = snippets[key]!['body'];
+    if (body is! List) return '';
+    return body.map((l) => l.toString()).join('\n');
+  }
+
+  String section(String title, Iterable<String> keys) {
+    final buf = StringBuffer('## $title\n\n');
+    for (final key in keys) {
+      final s = snippets[key]!;
+      buf.writeln('### `$key` — ${esc(s['description'] as String)}\n');
+      buf.writeln('```dart');
+      buf.writeln(bodyOf(key));
+      buf.writeln('```\n');
+    }
+    return buf.toString();
+  }
+
+  final curatedKeys = sortedKeys.where((k) => curated.containsKey(k)).toList();
+  final classKeys = sortedKeys.where((k) => k.startsWith('mb.new.')).toList();
+  final getterKeys = sortedKeys.where((k) => k.startsWith('mb.get.')).toList();
+  final fnKeys = sortedKeys.where((k) => k.startsWith('mb.fn.')).toList();
+  final apiKeys = sortedKeys
+      .where((k) =>
+          !curated.containsKey(k) &&
+          !k.startsWith('mb.new.') &&
+          !k.startsWith('mb.get.') &&
+          !k.startsWith('mb.fn.'))
+      .toList();
+
+  return '''# Modular Bridge Snippets — Full Reference
+
+Every snippet ships with `prefix: mb_*` and `scope: dart` — type the prefix
+in any Dart file and press `Tab` (or `Enter`) to expand.
+
+## Placeholder syntax
+
+| Syntax | Meaning |
+| --- | --- |
+| `\${1:Name}` | First tab stop — inserted with `Name` pre-selected; typing replaces it. Repeated `\${1}` occurrences mirror each other. |
+| `\${2}`, `\${3}` ... | Subsequent tab stops, visited in order with `Tab`. |
+| `\${1|a,b,c|}` | Choice list — `Tab`/arrow keys pick an option. |
+| `\$0` | Final cursor position (implicit end of snippet). |
+
+> Snippets insert text at the cursor only — they never add imports
+> automatically. Use `Ctrl+.` → **Add import** for missing imports.
+
+${section('Curated templates', curatedKeys)}
+${section('Public API call snippets', apiKeys)}
+${section('Class constructors (`mb.new.*`)', classKeys)}
+${section('Property getters (`mb.get.*`)', getterKeys)}
+${section('Top-level functions (`mb.fn.*`)', fnKeys)}
+---
+
+_Generated by `generate_snippets.dart` — do not edit by hand._
+''';
 }

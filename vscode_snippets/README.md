@@ -1,7 +1,8 @@
 # Modular Bridge — VS Code Snippets
 
 > **End users:** see [INSTALL.md](INSTALL.md) for manual installation
-> instructions (snippet file or `.vsix` package).
+> instructions (snippet file or `.vsix` package). Full snippet-by-snippet
+> reference: [SNIPPETS.md](SNIPPETS.md).
 
 Generates `modular-bridge.code-snippets` for VS Code from the public API of
 `package:modular_bridge`.
