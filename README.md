@@ -21,7 +21,7 @@
   - [1. Type-Safe Flavor & Environment Management (`BridgeConfig`)](#1-type-safe-flavor--environment-management-bridgeconfig)
   - [2. Isolated Feature Module Declaration (`FeatureModule`)](#2-isolated-feature-module-declaration-featuremodule)
   - [3. Decoupled Event Bus (`BridgeEventBus`)](#3-decoupled-event-bus-bridgeeventbus)
-  - [4. Flutter Widget Tree Integration (`BuildContext` Extensions)](#4-flutter-widget-tree-integration-buildcontext-extensions)
+  - [4. Flutter Widget Tree Integration](#4-flutter-widget-tree-integration)
   - [5. Testability & 1-Line Mock Overrides](#5-testability--1-line-mock-overrides)
   - [6. Advanced Capabilities](#6-advanced-capabilities)
 - [Full End-to-End Runnable Example](#-full-end-to-end-runnable-example)
@@ -42,7 +42,7 @@ In enterprise Flutter applications, as modules (`AuthModule`, `CartModule`, `Pay
 4. **Tedious Testing Setups:** Mocking a single dependency often requires instantiating an entire monolithic dependency graph or overriding global service locators.
 
 **The Modular Bridge Solution:**
-- ✅ **Zero External Dependencies:** Pure Dart core built entirely on the Dart SDK — no Flutter import, no third-party packages. Flutter widgets ship separately in `modular_bridge_flutter`.
+- ✅ **Zero External Dependencies:** Pure Dart package built entirely on the Dart SDK — zero third-party packages, works on Dart VM, CLI tools, backend servers, and Flutter apps.
 - ✅ **Module-Scoped Lifecycle & Automatic Disposal:** When a module is unregistered or the bridge is reset, all module-owned dependencies and event subscriptions are **automatically cancelled and disposed**.
 - ✅ **Type-Safe Environment & Hot-Switching:** Strictly typed accessors (`getString`, `getInt`, `getDuration`, etc.) with instant compile-time/runtime verification and runtime hot-switch capability.
 - ✅ **Decoupled Event Bus:** Modules communicate exclusively through strongly-typed domain events, without importing each other's internal concrete classes.
@@ -58,8 +58,8 @@ In enterprise Flutter applications, as modules (`AuthModule`, `CartModule`, `Pay
 ```mermaid
 flowchart TD
     subgraph UI_Layer["Flutter UI Layer"]
-        Scope["ModularBridgeProvider / ModularBridgeScope"]
-        ContextExt["context.get&lt;T&gt;() / context.config / context.publish()"]
+        Widgets["Widgets (ListenableBuilder / StreamBuilder)"]
+        Direct["ModularBridge.I.get&lt;T&gt;() / config / publish()"]
     end
 
     subgraph Container["ModularBridge (Core Container)"]
@@ -70,12 +70,12 @@ flowchart TD
 
     subgraph Modules["Feature Modules (Feature-First)"]
         CoreMod["CoreModule\n(ApiClient, LoggingService)"]
-        AuthMod["AuthModule\n(AuthRepository, AuthService)"]
-        HomeMod["HomeModule\n(HomeController, FeedService)"]
+        AuthMod["AuthModule\n(AuthRepository)"]
+        HomeMod["HomeModule\n(HomeController)"]
     end
 
-    Scope --> Container
-    ContextExt --> Scope
+    Widgets --> Direct
+    Direct --> Container
     CoreMod -.->|"Registers & Configures"| DI
     AuthMod -.->|"Registers & Configures"| DI
     HomeMod -.->|"Registers & Configures"| DI
@@ -88,37 +88,25 @@ flowchart TD
 
 ## 📦 Installation
 
-`modular_bridge` is split into two packages:
+`modular_bridge` is a single pure Dart package with zero dependencies — it works identically in Flutter apps, Dart CLI tools, and backend services.
 
-- **`modular_bridge`** — pure Dart core (DI container, modules, config, event bus). Zero dependencies; runs on the Dart VM, backend, CLI, and Flutter.
-- **`modular_bridge_flutter`** — Flutter widgets and helpers (`ModularBridgeScope`, `ModularBridgeProvider`, `BuildContext` extensions, `ModularBridgeInspector`, `rootBundle` config loaders).
-
-Add both to your `pubspec.yaml`:
+Add it to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
   modular_bridge: ^0.13.0
-  modular_bridge_flutter: ^0.1.0   # Flutter apps only
 ```
 
-> `modular_bridge` is pure Dart and also works with `dart pub add modular_bridge`. The Flutter package is only required for widgets, context helpers, asset loaders, and the inspector.
-
-Fetch the packages:
+Or add it from the command line:
 
 ```bash
-flutter pub get   # or: dart pub get for pure Dart projects
+flutter pub add modular_bridge   # or: dart pub add modular_bridge
 ```
 
-Import the core (pure Dart — also works with `dart test`):
+Then import it anywhere:
 
 ```dart
 import 'package:modular_bridge/modular_bridge.dart';
-```
-
-Flutter apps additionally import the widget layer:
-
-```dart
-import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 ```
 
 ---
@@ -127,20 +115,34 @@ import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
 
 No Flutter required — `modular_bridge` runs on the Dart VM, CLI tools, and backend servers:
 
-```bash
-dart pub add modular_bridge
-```
-
 ```dart
 import 'package:modular_bridge/modular_bridge.dart';
 
-void main() async {
+class ApiClient {
+  ApiClient({required this.baseUrl});
+  final String baseUrl;
+}
+
+final class UserLoggedInEvent extends BridgeEvent {
+  UserLoggedInEvent({required this.userId, required this.email});
+  final String userId;
+  final String email;
+}
+
+Future<void> main() async {
   final bridge = ModularBridge.createIsolated();
-  bridge.registerLazySingleton<ApiClient>(() => ApiClient('https://api.example.com'));
-  bridge.eventBus.on<AuthEvent>().listen((e) => print('auth: ${e.userId}'));
+  bridge.registerLazySingleton<ApiClient>(
+    () => ApiClient(baseUrl: 'https://api.example.com'),
+  );
+  bridge.eventBus.on<UserLoggedInEvent>().listen(
+    (e) => print('auth: ${e.userId} (${e.email})'),
+  );
 
   final client = bridge.get<ApiClient>();
-  bridge.eventBus.publish(AuthEvent(userId: 'u_42'));
+  print('client: ${client.baseUrl}');
+  bridge.eventBus.publish(
+    UserLoggedInEvent(userId: 'u_42', email: 'dev@example.com'),
+  );
 
   await bridge.dispose();
 }
@@ -173,12 +175,36 @@ and `BridgeScope`.
 
 ## 🚀 Quick Start & Step-by-Step Guide
 
+> All step-by-step snippets below share one cohesive mini-project (`ApiClient`, `AuthRepository`, `UserLoggedInEvent`, `UserLoggedOutEvent`, `CartService`). Runnable, analyzed versions live in [`example/lib/mini_app.dart`](example/lib/mini_app.dart), [`example/test/readme_examples_test.dart`](example/test/readme_examples_test.dart), and the full multi-tab showcase [`example/lib/main.dart`](example/lib/main.dart).
+
 ### ⚡ Minimal example — running in 60 seconds
 
 The smallest possible setup — everything else is detail:
 
 ```dart
-// main.dart
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:modular_bridge/modular_bridge.dart';
+
+class ApiClient {
+  ApiClient({required this.baseUrl, this.timeout = const Duration(seconds: 30)});
+  final String baseUrl;
+  final Duration timeout;
+  Future<bool> ping() async => true;
+}
+
+final class CoreModule extends FeatureModule {
+  @override
+  String get name => 'CoreModule';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {
+    bridge.registerSingleton<ApiClient>(
+      ApiClient(baseUrl: bridge.config.getString('apiBaseUrl')),
+    );
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -187,24 +213,14 @@ Future<void> main() async {
     'assets/config.json',
     loader: rootBundle.loadString,
   ));
-  await bridge.registerModules([CoreModule(), AuthModule()]);
+  await bridge.registerModules([CoreModule()]);
 
-  runApp(const MyApp());
+  // Resolve anywhere with a single line:
+  final api = bridge.get<ApiClient>();
+  debugPrint('API base URL: ${api.baseUrl}');
+
+  runApp(const MaterialApp(home: Scaffold(body: Center(child: Text('Ready')))));
 }
-
-// lib/features/core/core_module.dart — one method is enough:
-final class CoreModule extends FeatureModule {
-  @override
-  String get name => 'CoreModule';
-
-  @override
-  void registerDependencies(ModularBridge bridge) {
-    bridge.registerSingleton<ApiClient>(ApiClient());
-  }
-}
-
-// Resolve anywhere with a single line:
-final api = ModularBridge.I.get<ApiClient>();
 ```
 
 That's it — module, DI, config and the event bus are ready. Every piece is detailed below.
@@ -257,13 +273,13 @@ final int retries = config.getInt('retryCount', defaultValue: 1);
 
 #### Runtime Flavor Hot-Switching:
 ```dart
-// Switch to production at runtime; all stream listeners and UI widgets rebuild instantly!
+// Switch to production at runtime; all stream listeners and reactive widgets rebuild!
 config.switchEnvironment(BridgeEnvironment.prod);
 ```
 
 #### Loading Config from JSON
 
-In Flutter apps, `loadBridgeConfigFromAsset` (from `package:modular_bridge_flutter`) loads a JSON file bundled with the app via `rootBundle` — no manual parsing needed:
+Pass any string loader into `BridgeConfig.fromAsset` — in Flutter apps pass `rootBundle.loadString` (see [`example/lib/main.dart`](example/lib/main.dart) and [`example/assets/config.json`](example/assets/config.json)), or pass `File(path).readAsString` in pure Dart CLI/backend code:
 
 ```dart
 // assets/config.json:
@@ -276,12 +292,13 @@ In Flutter apps, `loadBridgeConfigFromAsset` (from `package:modular_bridge_flutt
 //   }
 // }
 
-final config = await loadBridgeConfigFromAsset('assets/config.json');
+final config = await BridgeConfig.fromAsset(
+  'assets/config.json',
+  loader: rootBundle.loadString,
+);
 // or decode in-memory JSON: BridgeConfig.fromString(json) / BridgeConfig.fromJson(map)
 // the `environment:` parameter overrides the JSON "environment" key when provided.
 ```
-
-Pure Dart callers inject their own loader into `BridgeConfig.fromAsset(path, loader: ...)`.
 
 #### Loading Config from `.env` Files
 
@@ -293,7 +310,10 @@ Pure Dart callers inject their own loader into `BridgeConfig.fromAsset(path, loa
 //   API_BASE_URL=https://staging.api.example.com
 //   API_TIMEOUT_MS=15000
 
-final config = await loadBridgeConfigFromEnvAsset('assets/.env');
+final config = await BridgeConfig.fromEnvFile(
+  'assets/.env',
+  loader: rootBundle.loadString,
+);
 final baseUrl = config.getString('API_BASE_URL');
 final timeout = config.getDuration('API_TIMEOUT_MS'); // coerced from int ms
 ```
@@ -304,9 +324,64 @@ Environment keys accept the same aliases as `BridgeEnvironment.fromString` (`"de
 
 ### 2. Isolated Feature Module Declaration (`FeatureModule`)
 
-Each feature extends `FeatureModule`. Modules register their internal dependencies and explicitly declare prerequisite module dependencies:
+Each feature extends `FeatureModule`. Modules register their internal dependencies and explicitly declare prerequisite module dependencies. Continuing with our mini-project types (`ApiClient`, `UserLoggedInEvent`, `UserLoggedOutEvent`, `AuthRepository`, `AuthRepositoryImpl`):
 
 ```dart
+// Shared domain events & contracts
+final class UserLoggedInEvent extends BridgeEvent {
+  UserLoggedInEvent({required this.userId, required this.email});
+  final String userId;
+  final String email;
+}
+
+final class UserLoggedOutEvent extends BridgeEvent {
+  UserLoggedOutEvent({required this.userId, required this.reason});
+  final String userId;
+  final String reason;
+}
+
+abstract class AuthRepository {
+  bool get isLoggedIn;
+  String? get email;
+  Future<void> login(String email);
+  Future<void> logout();
+}
+
+class AuthRepositoryImpl implements AuthRepository {
+  AuthRepositoryImpl({required ApiClient apiClient, required ModularBridge bridge})
+      : _apiClient = apiClient,
+        _bridge = bridge;
+
+  final ApiClient _apiClient;
+  final ModularBridge _bridge;
+
+  bool _isLoggedIn = false;
+  String? _email;
+
+  @override
+  bool get isLoggedIn => _isLoggedIn;
+
+  @override
+  String? get email => _email;
+
+  @override
+  Future<void> login(String email) async {
+    assert(_apiClient.baseUrl.isNotEmpty);
+    _isLoggedIn = true;
+    _email = email;
+    _bridge.publish(UserLoggedInEvent(userId: 'usr_123', email: email));
+  }
+
+  @override
+  Future<void> logout() async {
+    _isLoggedIn = false;
+    _email = null;
+    _bridge.publish(
+      UserLoggedOutEvent(userId: 'usr_123', reason: 'User logged out manually'),
+    );
+  }
+}
+
 // 1. Core Infrastructure Module
 final class CoreModule extends FeatureModule {
   @override
@@ -336,8 +411,10 @@ final class AuthModule extends FeatureModule {
   @override
   void registerDependencies(ModularBridge bridge) {
     bridge.registerLazySingleton<AuthRepository>(() {
-      final apiClient = bridge.get<ApiClient>();
-      return AuthRepositoryImpl(apiClient: apiClient);
+      return AuthRepositoryImpl(
+        apiClient: bridge.get<ApiClient>(),
+        bridge: bridge,
+      );
     });
   }
 }
@@ -356,12 +433,27 @@ await ModularBridge.I.registerModules([
 `registerDependencies` may return a `Future` (`FutureOr<void>`), so modules can perform asynchronous setup — reading files, opening connections — before `init` runs. Dependencies registered after `await` points are still attributed to the correct module, and parallel `registerModule` calls never leak ownership across modules:
 
 ```dart
+class PreferencesStore {
+  static Future<PreferencesStore> open() async => PreferencesStore();
+}
+
+class DatabaseClient {
+  static Future<DatabaseClient> open() async => DatabaseClient();
+  Future<void> close() async {}
+}
+
 final class DataModule extends FeatureModule {
   @override
+  String get name => 'DataModule';
+
+  @override
   Future<void> registerDependencies(ModularBridge bridge) async {
-    final prefs = await SharedPreferences.getInstance();
-    bridge.registerSingleton<SharedPreferences>(prefs);
-    bridge.registerAsyncSingleton<DatabaseClient>(DatabaseClient.open);
+    final prefs = await PreferencesStore.open();
+    bridge.registerSingleton<PreferencesStore>(prefs);
+    bridge.registerAsyncSingleton<DatabaseClient>(
+      DatabaseClient.open,
+      onDispose: (db) => db.close(),
+    );
   }
 
   @override
@@ -383,7 +475,10 @@ for every registered module and returns per-module `ModuleHealthResult`s —
 errors are captured instead of propagated:
 
 ```dart
-final class ApiModule extends FeatureModule {
+final class ApiHealthModule extends FeatureModule {
+  @override
+  String get name => 'ApiHealthModule';
+
   @override
   Future<bool> healthCheck(ModularBridge bridge) async {
     final api = bridge.tryGet<ApiClient>();
@@ -397,6 +492,20 @@ final healthy = results.every((r) => r.isHealthy);
 
 #### Optional Dependencies and Module Initialization Errors
 ```dart
+class AnalyticsService {
+  void trackScreen(String name) {}
+}
+
+final class ReportsModule extends FeatureModule {
+  @override
+  String get name => 'ReportsModule';
+
+  @override
+  void init(ModularBridge bridge) {
+    throw StateError('Missing report config');
+  }
+}
+
 final bridge = ModularBridge.I;
 
 // Returns null only when no AnalyticsService is registered.
@@ -418,36 +527,33 @@ try {
 
 Feature modules communicate solely by publishing and subscribing to **Domain Events**, without importing each other's internal classes.
 
-#### Defining Domain Events:
-```dart
-final class UserLoggedOutEvent extends BridgeEvent {
-  UserLoggedOutEvent({required this.userId, required this.reason});
+#### Publishing an Event (`AuthRepositoryImpl`):
+In the `AuthRepositoryImpl.logout()` implementation defined above, calling `logout()` clears the session and broadcasts:
 
-  final String userId;
-  final String reason;
-}
-```
-
-#### Publishing an Event (`AuthModule`):
 ```dart
-class AuthRepositoryImpl implements AuthRepository {
-  @override
-  Future<void> logout() async {
-    // Perform session invalidation...
-    
-    // Broadcast decoupled event:
-    ModularBridge.I.publish(
-      UserLoggedOutEvent(userId: 'usr_123', reason: 'User logged out manually'),
-    );
-  }
-}
+_bridge.publish(
+  UserLoggedOutEvent(userId: 'usr_123', reason: 'User logged out manually'),
+);
 ```
 
 #### Subscribing with Auto-Disposal (`CartModule`):
-The `subscribe` helper in `FeatureModule` registers the subscription under the module's scope. When the module is unregistered or disposed, all subscriptions are **automatically cancelled to prevent memory leaks**:
+The `subscribe` helper in `FeatureModule` registers the subscription under the module's scope. When the module is unregistered or disposed, all subscriptions are **automatically cancelled to prevent memory leaks** (see [`example/lib/cart/cart_module.dart`](example/lib/cart/cart_module.dart)):
 
 ```dart
+class CartService {
+  final List<String> items = [];
+  void clearCart() => items.clear();
+}
+
 final class CartModule extends FeatureModule {
+  @override
+  String get name => 'CartModule';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {
+    bridge.registerLazySingleton<CartService>(() => CartService());
+  }
+
   @override
   void init(ModularBridge bridge) {
     final cartService = bridge.get<CartService>();
@@ -455,7 +561,7 @@ final class CartModule extends FeatureModule {
     // Listen to UserLoggedOutEvent WITHOUT importing any AuthModule internals:
     subscribe<UserLoggedOutEvent>(bridge, (event) {
       cartService.clearCart();
-      print('User logged out (${event.reason}), shopping cart cleared.');
+      print('User ${event.userId} logged out (${event.reason}), cart cleared.');
     });
   }
 }
@@ -463,79 +569,120 @@ final class CartModule extends FeatureModule {
 
 ---
 
-### 4. Flutter Widget Tree Integration (`BuildContext` Extensions)
+### 4. Flutter Widget Tree Integration
 
-> These widgets live in `package:modular_bridge_flutter` — import it alongside the core package.
-
-Wrap your root application with `ModularBridgeProvider` to supply the container and automatically propagate runtime flavor switches down the widget tree:
+No extra Flutter wrapper package is needed — resolve dependencies directly from `ModularBridge.I` and react to environment switches or controller updates with standard Flutter widgets (`StreamBuilder`, `ListenableBuilder`, `AnimatedBuilder`):
 
 ```dart
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await ModularBridge.I.registerModules([
-    CoreModule(),
-    AuthModule(),
-    HomeModule(),
-  ]);
-
-  runApp(
-    const ModularBridgeProvider(
-      child: MyApp(),
-    ),
-  );
-}
+import 'package:flutter/material.dart';
+import 'package:modular_bridge/modular_bridge.dart';
 
 class UserProfileCard extends StatelessWidget {
   const UserProfileCard({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Direct dependency & config resolution via BuildContext extensions:
-    final authRepo = context.get<AuthRepository>();
-    final isProd = context.config.environment.isProd;
+    final bridge = ModularBridge.I;
+    final authRepo = bridge.get<AuthRepository>();
 
-    return Card(
-      child: ListTile(
-        title: Text('User: ${authRepo.currentUserEmail}'),
-        subtitle: Text('Environment: ${context.config.environment.name}'),
-        trailing: IconButton(
-          icon: const Icon(Icons.logout),
-          onPressed: () => authRepo.logout(),
-        ),
-      ),
+    // Rebuilds automatically whenever config.switchEnvironment(...) is called:
+    return StreamBuilder<BridgeEnvironment>(
+      stream: bridge.config.onEnvironmentChanged,
+      initialData: bridge.config.environment,
+      builder: (context, _) {
+        return Card(
+          child: ListTile(
+            title: Text('User: ${authRepo.email ?? 'Guest'}'),
+            subtitle: Text('Environment: ${bridge.config.environment.name}'),
+            trailing: IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () => authRepo.logout(),
+            ),
+          ),
+        );
+      },
     );
   }
 }
 ```
 
+<details>
+<summary>Optional: copy-paste <code>BuildContext</code> extension (if you prefer <code>context.get&lt;T&gt;()</code> syntax)</summary>
+
+```dart
+import 'package:flutter/widgets.dart';
+import 'package:modular_bridge/modular_bridge.dart';
+
+extension ModularBridgeContextX on BuildContext {
+  ModularBridge get bridge => ModularBridge.I;
+  T get<T extends Object>({String? instanceName}) =>
+      bridge.get<T>(instanceName: instanceName);
+  T? tryGet<T extends Object>({String? instanceName}) =>
+      bridge.tryGet<T>(instanceName: instanceName);
+  BridgeConfig get config => bridge.config;
+  void publish<T extends BridgeEvent>(T event) => bridge.publish(event);
+}
+```
+
+</details>
+
 ---
 
 ### 5. Testability & 1-Line Mock Overrides
 
-Unit and widget tests do not require complex wrapper setups. Override any dependency in a single line using `bridge.override<T>()`:
+Unit and widget tests do not require complex wrapper setups. Override any dependency in a single line using `bridge.override<T>()` (see [`example/test/readme_examples_test.dart`](example/test/readme_examples_test.dart)):
 
 ```dart
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart'; // or package:flutter_test/flutter_test.dart
 import 'package:modular_bridge/modular_bridge.dart';
 
 class MockAuthRepository implements AuthRepository {
+  bool _isLoggedIn = false;
+  String? _email;
+
   @override
-  Future<void> logout() async {}
+  bool get isLoggedIn => _isLoggedIn;
+
+  @override
+  String? get email => _email;
+
+  @override
+  Future<void> login(String email) async {
+    _isLoggedIn = true;
+    _email = email;
+  }
+
+  @override
+  Future<void> logout() async {
+    _isLoggedIn = false;
+    _email = null;
+  }
 }
 
 void main() {
-  test('Single-line mock override unit test', () {
+  test('Single-line mock override unit test', () async {
     // Create an isolated container to prevent test state leakage
     final bridge = ModularBridge.createIsolated();
 
     // Register original real dependency
-    bridge.registerLazySingleton<AuthRepository>(() => RealAuthRepository());
+    bridge.registerLazySingleton<AuthRepository>(
+      () => AuthRepositoryImpl(
+        apiClient: ApiClient(baseUrl: 'https://dev.api.example.com'),
+        bridge: bridge,
+      ),
+    );
 
     // Override with mock in one line:
     bridge.override<AuthRepository>(MockAuthRepository());
 
-    expect(bridge.get<AuthRepository>(), isA<MockAuthRepository>());
+    final authRepo = bridge.get<AuthRepository>();
+    expect(authRepo, isA<MockAuthRepository>());
+
+    await authRepo.login('dev@example.com');
+    expect(authRepo.isLoggedIn, isTrue);
+    expect(authRepo.email, 'dev@example.com');
+
+    await bridge.dispose();
   });
 }
 ```
@@ -544,14 +691,25 @@ void main() {
 
 ### 6. Advanced Capabilities
 
+> **Note:** Each subsection below is a focused snippet showing minimal stub types inline so it stands on its own; see [`example/lib/main.dart`](example/lib/main.dart) for a complete running app demonstrating these features together.
+
 #### Async Dependencies (`getAsync`)
 
 Dependencies backed by asynchronous resources (database connections, remote config, etc.) use `registerAsyncSingleton` and are resolved with `getAsync`. Concurrent calls share a single in-flight resolution, failed resolutions are retried automatically, and circular async chains are detected without deadlocking:
 
 ```dart
-// Inside a FeatureModule:
+class DatabaseClient {
+  DatabaseClient(this.url);
+  final String url;
+  static Future<DatabaseClient> connect(String url) async => DatabaseClient(url);
+  Future<void> close() async {}
+}
+
+class FeatureFlags {}
+
+// Inside a FeatureModule (or directly on bridge):
 bridge.registerAsyncSingleton<DatabaseClient>(
-  () async => DatabaseClient.connect(config.databaseUrl),
+  () => DatabaseClient.connect(bridge.config.getString('databaseUrl')),
   onDispose: (client) => client.close(),
 );
 
@@ -568,6 +726,16 @@ For transient async resources use `registerFactoryAsync<T>()` — every `getAsyn
 When two dependencies genuinely reference each other, wrap one side in a `Lazy<T>` so it resolves on first access instead of during registration:
 
 ```dart
+class ServiceA {
+  ServiceA(this.lazyB);
+  final Lazy<ServiceB> lazyB;
+}
+
+class ServiceB {
+  ServiceB(this.a);
+  final ServiceA a;
+}
+
 bridge.registerLazySingleton<ServiceA>(
   () => ServiceA(bridge.lazy<ServiceB>()),
 );
@@ -588,7 +756,7 @@ Pass `eager: true` to `registerAsyncSingleton` to start resolution at registrati
 
 ```dart
 bridge.registerAsyncSingleton<DatabaseClient>(
-  DatabaseClient.open,
+  () => DatabaseClient.connect('postgres://localhost/app'),
   eager: true,
   onDispose: (client) => client.close(),
 );
@@ -609,8 +777,23 @@ bridge.isReadySync<DatabaseClient>();
 `bridge.createScope()` creates an isolated registration context for per-request or per-session state. Scoped dependencies are invisible to sibling scopes, fall back through the scope hierarchy to the parent container for unregistered types, and are all disposed together. Scopes support every lifecycle — including `registerAsyncSingleton` and `registerFactoryAsync`:
 
 ```dart
+class RequestContext {
+  RequestContext({required this.userId});
+  final String userId;
+}
+
+class SessionCache {
+  static Future<SessionCache> open() async => SessionCache();
+}
+
+class AuthToken {
+  AuthToken(this.value);
+  final String value;
+}
+
+const userId = 'u_42';
 final scope = bridge.createScope(scopeName: 'checkout');
-scope.registerSingleton<RequestContext>(RequestContext(userId: user.id));
+scope.registerSingleton<RequestContext>(RequestContext(userId: userId));
 scope.registerAsyncSingleton<SessionCache>(SessionCache.open);
 
 final session = await scope.getAsync<SessionCache>();
@@ -622,7 +805,7 @@ Scopes form a hierarchy via `scope.createChildScope()` — a child resolves chil
 
 ```dart
 final requestScope = await bridge.createScopeAsync((scope) async {
-  scope.registerSingleton<AuthToken>(await tokenStore.read());
+  scope.registerSingleton<AuthToken>(AuthToken('tok_123'));
 });
 ```
 
@@ -631,8 +814,9 @@ final requestScope = await bridge.createScopeAsync((scope) async {
 `pushNewScope` enables implicit scoping: registrations and resolutions flow through the top scope automatically — no explicit `scope.get` calls required:
 
 ```dart
+const userId = 'u_42';
 bridge.pushNewScope(scopeName: 'request', isFinal: true, init: (b) {
-  b.registerSingleton<RequestContext>(RequestContext(userId: user.id));
+  b.registerSingleton<RequestContext>(RequestContext(userId: userId));
 });
 
 // bridge.get<T>() now resolves through the request scope first.
@@ -652,6 +836,14 @@ Instances implementing `Disposable` (`FutureOr<void> onDispose()`) are disposed 
 Async singletons can opt into manual readiness signalling, and any registration can declare dependencies that must resolve before its factory runs:
 
 ```dart
+class PaymentGateway {}
+
+class CheckoutFlow {
+  CheckoutFlow(this.cart, this.payments);
+  final CartService cart;
+  final PaymentGateway payments;
+}
+
 class SessionService implements WillSignalReady {
   Future<void> init() async {
     // ... heavy async work ...
@@ -684,6 +876,12 @@ await bridge.allReady(timeout: const Duration(seconds: 10));
 Factories can receive two runtime parameters via `registerFactoryParam`. Cached variants memoize per `(param1, param2)` pair:
 
 ```dart
+class HttpClient {
+  HttpClient(this.baseUrl, this.timeoutSeconds);
+  final String baseUrl;
+  final int timeoutSeconds;
+}
+
 bridge.registerCachedFactoryParam<HttpClient, String, int>(
   (baseUrl, timeoutSeconds) => HttpClient(baseUrl, timeoutSeconds),
 );
@@ -699,12 +897,12 @@ final client = bridge.getParam<HttpClient, String, int>(
 #### Bulk Resolution & Dependency Graph
 
 ```dart
-final allClients = bridge.getAll<HttpClient>();        // every named/unnamed registration
-final allAsync = await bridge.getAllAsync<Session>();  // async-aware variant
+final allClients = bridge.getAll<HttpClient>();           // every named/unnamed registration
+final allCaches = await bridge.getAllAsync<SessionCache>(); // async-aware variant
 
 final graph = bridge.dependencyGraph();
 if (graph.hasCycles) {
-  debugPrint('Dependency cycles: ${graph.cycles}');
+  print('Dependency cycles: ${graph.cycles}');
 }
 ```
 
@@ -717,6 +915,9 @@ Gate a module to specific environments via `FeatureModule.environments` — it i
 ```dart
 final class DebugModule extends FeatureModule {
   @override
+  String get name => 'DebugModule';
+
+  @override
   List<BridgeEnvironment>? get environments => [BridgeEnvironment.dev];
 
   @override
@@ -726,23 +927,25 @@ final class DebugModule extends FeatureModule {
 
 #### Inspector Hooks
 
-`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection — the extensions are process-wide and always report on the most recently enabled bridge, so calling it on a fresh container retargets the snapshot. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them. `ModularBridgeInspector` stays read-only by default; pass `onUnregisterDependency`/`onResetLazySingletons` callbacks to enable action buttons.
+`bridge.onDependencyEvents` streams every registration/unregistration across all scopes, `dependencyGraph().toDot()` exports the `dependsOn` graph for Graphviz, `bridge.metrics` records per-key resolution counts/cache-hit ratios/durations, and `bridge.enableDevTools()` registers `ext.modular_bridge.*` VM service extensions for live inspection — the extensions are process-wide and always report on the most recently enabled bridge, so calling it on a fresh container retargets the snapshot. `bridge.warmup()` eagerly resolves all singleton-style registrations at startup. Instances implementing `ShadowChangeHandlers` get `onGetShadowed`/`onLeaveShadow` callbacks when a scope registration shadows them.
 
-Migrating from `get_it`? See [MIGRATION.md](MIGRATION.md) for a full cheat sheet. Run `flutter test benchmark/` for resolution throughput numbers (roughly ~1M sync `get` ops/s and ~1.5M scope-fallback ops/s on a dev machine).
+Migrating from `get_it`? See [MIGRATION.md](MIGRATION.md) for a full cheat sheet. Run `dart test benchmark/` for resolution throughput numbers (roughly ~1M sync `get` ops/s and ~1.5M scope-fallback ops/s on a dev machine).
 
 #### Resolution Interceptors
 
 `addResolutionInterceptor` wraps every public resolution (`get`, `getAsync`, `getParam`, `getParamAsync`, and their scope-aware paths) in onion-style middleware. This is useful for logging, metrics, feature flags, authorization-style guards, caching decorators, or test instrumentation:
 
 ```dart
+class FakePaymentGateway implements PaymentGateway {}
+
 bridge.addResolutionInterceptor((request, next) {
   final sw = Stopwatch()..start();
   try {
     final value = next();
-    debugPrint('${request.type} resolved in ${sw.elapsedMicroseconds}µs');
+    print('${request.type} resolved in ${sw.elapsedMicroseconds}µs');
     return value;
   } catch (e) {
-    debugPrint('${request.type} FAILED in ${sw.elapsedMicroseconds}µs: $e');
+    print('${request.type} FAILED in ${sw.elapsedMicroseconds}µs: $e');
     rethrow;
   }
 });
@@ -757,7 +960,7 @@ Interceptors run in registration order (first added = outermost), receive a `Bri
 #### Lazy Singleton Reset
 
 ```dart
-await bridge.resetLazySingleton<UserRepository>();
+await bridge.resetLazySingleton<AuthRepository>();
 await bridge.resetLazySingletons();          // active scope or root
 await bridge.resetScope(disposeInstances: false);
 ```
@@ -767,6 +970,13 @@ await bridge.resetScope(disposeInstances: false);
 `registerConfigBinding` ties a DI registration to a `BridgeConfig` key — the cached value is automatically reset and re-decoded on every effective config change:
 
 ```dart
+class ApiConfig {
+  ApiConfig(this.baseUrl);
+  factory ApiConfig.fromMap(Map map) => ApiConfig(map['baseUrl'] as String);
+  final String baseUrl;
+  void close() {}
+}
+
 bridge.registerConfigBinding<ApiConfig>(
   configKey: 'api',
   decoder: (v) => ApiConfig.fromMap(v as Map),
@@ -803,9 +1013,14 @@ scope.removeConfigValue('tenant');  // back to global value
 `BridgeEventBus.addEventInterceptor` wraps the publish pipeline in onion-style middleware — observe, transform, fan out, or veto events before they reach subscribers:
 
 ```dart
+final class OrderPlacedEvent extends BridgeEvent {
+  OrderPlacedEvent(this.total);
+  final double total;
+}
+
 bridge.eventBus.addEventInterceptor((event, next) {
   if (event is OrderPlacedEvent && event.total < 0) return; // veto
-  debugPrint('publishing ${event.runtimeType}');
+  print('publishing ${event.runtimeType}');
   next(event);
 });
 ```
@@ -817,11 +1032,13 @@ Interceptors run onion-style in registration order. They may observe an event, t
 `registerAsyncSingleton`/`registerSingletonAsync`/`registerLazySingletonAsync`/`registerFactoryAsync` accept a `BridgeRetryPolicy` — transient network failures at startup get automatic retry with configurable backoff:
 
 ```dart
-bridge.registerAsyncSingleton<ApiClient>(
-  () => ApiClient.connect(),
-  retryPolicy: const BridgeRetryPolicy(
+import 'dart:io';
+
+bridge.registerAsyncSingleton<DatabaseClient>(
+  () => DatabaseClient.connect('postgres://localhost/app'),
+  retryPolicy: BridgeRetryPolicy(
     maxAttempts: 3,
-    delay: Duration(milliseconds: 200),
+    delay: const Duration(milliseconds: 200),
     backoff: 2.0,
     retryIf: (e) => e is SocketException,
   ),
@@ -836,7 +1053,7 @@ bridge.registerAsyncSingleton<ApiClient>(
 
 ```dart
 // Replay latest auth state to a freshly opened screen:
-bridge.onLatest<UserLoggedInEvent>().listen((e) => showWelcome(e.email));
+bridge.onLatest<UserLoggedInEvent>().listen((e) => print('Welcome ${e.email}'));
 
 // Wait for a one-time event:
 final event = await bridge.once<OrderPlacedEvent>(
@@ -854,55 +1071,63 @@ bridge.onModulesReady((b) {
 });
 ```
 
-`BridgeConfig` also gained `onChanged` (reactive config stream), `remove(key)` for runtime overrides, persistent `set`/`setAll` overrides across environment switches, and `getMap`/`getSection` for decoding nested config maps into typed objects.
-
-`BridgeScope` supports per-scope configuration overrides for request/session values such as tenant IDs or feature flags. Overrides shadow the global config for `configValue` lookups and config-bound dependencies resolved through that scope, inherit to child scopes, and disappear with the scope:
-
-```dart
-final scope = bridge.pushNewScope(scopeName: 'request');
-scope.setConfigValue('tenant', 'acme');
-scope.setConfigValue('api.baseUrl', 'https://acme.api.dev');
-
-final tenant = bridge.configValue<String>('tenant');
-final url = scope.configValue<String>('api.baseUrl');
-
-scope.removeConfigValue('tenant');
-```
-
-Config-bound dependencies registered inside the scope are re-decoded automatically when a scope override changes.
+`BridgeConfig` also supports `onChanged` (reactive config stream), `remove(key)` / `removeRuntimeOverrides()` for runtime overrides, persistent `set`/`setAll` overrides across environment switches, and `getMap`/`getSection` for decoding nested config maps into typed objects.
 
 ---
 
 ## 💻 Full End-to-End Runnable Example
 
-Copy and paste this self-contained snippet into your `main.dart` to run it immediately:
+Copy and paste this self-contained snippet into your `main.dart` to run it immediately — or run [`example/lib/mini_app.dart`](example/lib/mini_app.dart) directly (see [`example/lib/main.dart`](example/lib/main.dart) for the full multi-tab showcase):
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:modular_bridge_flutter/modular_bridge_flutter.dart';
+import 'package:modular_bridge/modular_bridge.dart';
 
 // -----------------------------------------------------------------------------
 // 1. DOMAIN EVENTS
 // -----------------------------------------------------------------------------
 final class UserLoggedInEvent extends BridgeEvent {
-  UserLoggedInEvent({required this.email});
+  UserLoggedInEvent({required this.userId, required this.email});
+  final String userId;
   final String email;
 }
 
-final class UserLoggedOutEvent extends BridgeEvent {}
+final class UserLoggedOutEvent extends BridgeEvent {
+  UserLoggedOutEvent({required this.userId, required this.reason});
+  final String userId;
+  final String reason;
+}
 
 // -----------------------------------------------------------------------------
 // 2. SERVICES & MODULES
 // -----------------------------------------------------------------------------
+class ApiClient {
+  ApiClient({
+    required this.baseUrl,
+    this.timeout = const Duration(seconds: 30),
+  });
+
+  final String baseUrl;
+  final Duration timeout;
+
+  Future<bool> ping() async => true;
+}
+
 abstract class AuthRepository {
   bool get isLoggedIn;
   String? get email;
-  void login(String email);
-  void logout();
+  Future<void> login(String email);
+  Future<void> logout();
 }
 
 class AuthRepositoryImpl implements AuthRepository {
-  AuthRepositoryImpl(this._bridge);
+  AuthRepositoryImpl({
+    required ApiClient apiClient,
+    required ModularBridge bridge,
+  })  : _apiClient = apiClient,
+        _bridge = bridge;
+
+  final ApiClient _apiClient;
   final ModularBridge _bridge;
 
   bool _isLoggedIn = false;
@@ -915,17 +1140,38 @@ class AuthRepositoryImpl implements AuthRepository {
   String? get email => _email;
 
   @override
-  void login(String email) {
+  Future<void> login(String email) async {
+    assert(_apiClient.baseUrl.isNotEmpty);
     _isLoggedIn = true;
     _email = email;
-    _bridge.publish(UserLoggedInEvent(email: email));
+    _bridge.publish(UserLoggedInEvent(userId: 'usr_123', email: email));
   }
 
   @override
-  void logout() {
+  Future<void> logout() async {
     _isLoggedIn = false;
     _email = null;
-    _bridge.publish(UserLoggedOutEvent());
+    _bridge.publish(
+      UserLoggedOutEvent(
+        userId: 'usr_123',
+        reason: 'User logged out manually',
+      ),
+    );
+  }
+}
+
+final class CoreModule extends FeatureModule {
+  @override
+  String get name => 'CoreModule';
+
+  @override
+  void registerDependencies(ModularBridge bridge) {
+    bridge.registerLazySingleton<ApiClient>(
+      () => ApiClient(
+        baseUrl: bridge.config.getString('apiBaseUrl'),
+        timeout: bridge.config.getDuration('apiTimeout'),
+      ),
+    );
   }
 }
 
@@ -934,8 +1180,16 @@ final class AuthModule extends FeatureModule {
   String get name => 'AuthModule';
 
   @override
+  List<Type> get dependencies => [CoreModule];
+
+  @override
   void registerDependencies(ModularBridge bridge) {
-    bridge.registerLazySingleton<AuthRepository>(() => AuthRepositoryImpl(bridge));
+    bridge.registerLazySingleton<AuthRepository>(
+      () => AuthRepositoryImpl(
+        apiClient: bridge.get<ApiClient>(),
+        bridge: bridge,
+      ),
+    );
   }
 }
 
@@ -947,8 +1201,8 @@ class HomeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void onUserLoggedOut() {
-    message = 'User logged out. Feed cleared.';
+  void onUserLoggedOut(String reason) {
+    message = 'User logged out ($reason). Feed cleared.';
     notifyListeners();
   }
 }
@@ -956,6 +1210,9 @@ class HomeController extends ChangeNotifier {
 final class HomeModule extends FeatureModule {
   @override
   String get name => 'HomeModule';
+
+  @override
+  List<Type> get dependencies => [CoreModule];
 
   @override
   void registerDependencies(ModularBridge bridge) {
@@ -967,35 +1224,47 @@ final class HomeModule extends FeatureModule {
     final controller = bridge.get<HomeController>();
 
     // Listen to Auth events in a completely decoupled fashion:
-    subscribe<UserLoggedInEvent>(bridge, (e) => controller.onUserLoggedIn(e.email));
-    subscribe<UserLoggedOutEvent>(bridge, (e) => controller.onUserLoggedOut());
+    subscribe<UserLoggedInEvent>(
+      bridge,
+      (e) => controller.onUserLoggedIn(e.email),
+    );
+    subscribe<UserLoggedOutEvent>(
+      bridge,
+      (e) => controller.onUserLoggedOut(e.reason),
+    );
   }
 }
 
 // -----------------------------------------------------------------------------
 // 3. APPLICATION INITIALIZATION
 // -----------------------------------------------------------------------------
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 1. Initialize type-safe configuration
   final config = BridgeConfig(
     environment: BridgeEnvironment.dev,
     environmentValues: {
-      BridgeEnvironment.dev: {'apiBaseUrl': 'https://dev.api.example.com'},
-      BridgeEnvironment.prod: {'apiBaseUrl': 'https://api.example.com'},
+      BridgeEnvironment.dev: {
+        'apiBaseUrl': 'https://dev.api.example.com',
+        'apiTimeout': const Duration(seconds: 30),
+      },
+      BridgeEnvironment.prod: {
+        'apiBaseUrl': 'https://api.example.com',
+        'apiTimeout': const Duration(seconds: 10),
+      },
     },
   );
   ModularBridge.I.setConfig(config);
 
   // 2. Register feature modules
-  await ModularBridge.I.registerModules([AuthModule(), HomeModule()]);
+  await ModularBridge.I.registerModules([
+    CoreModule(),
+    AuthModule(),
+    HomeModule(),
+  ]);
 
-  runApp(
-    const ModularBridgeProvider(
-      child: MyApp(),
-    ),
-  );
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -1016,79 +1285,98 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authRepo = context.get<AuthRepository>();
-    final homeController = context.get<HomeController>();
-    final config = context.config;
+    final bridge = ModularBridge.I;
+    final authRepo = bridge.get<AuthRepository>();
+    final homeController = bridge.get<HomeController>();
+    final config = bridge.config;
+    final colorScheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Modular Bridge Demo'),
-        actions: [
-          // Flavor Hot-Switch Button
-          TextButton.icon(
-            onPressed: () {
-              final nextEnv = config.environment.isDev
-                  ? BridgeEnvironment.prod
-                  : BridgeEnvironment.dev;
-              config.switchEnvironment(nextEnv);
-            },
-            icon: const Icon(Icons.swap_horiz, color: Colors.white),
-            label: Text(
-              config.environment.name.toUpperCase(),
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Active API Base URL: ${config.getString('apiBaseUrl')}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 20),
-              ListenableBuilder(
-                listenable: homeController,
-                builder: (context, _) {
-                  return Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.indigo.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      homeController.message,
-                      style: const TextStyle(fontSize: 16, color: Colors.indigo),
-                      textAlign: TextAlign.center,
-                    ),
-                  );
+    return StreamBuilder<BridgeEnvironment>(
+      stream: config.onEnvironmentChanged,
+      initialData: config.environment,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(
+            backgroundColor: colorScheme.primary,
+            foregroundColor: colorScheme.onPrimary,
+            title: const Text('Modular Bridge Demo'),
+            actions: [
+              // Flavor Hot-Switch Button
+              TextButton.icon(
+                onPressed: () {
+                  final nextEnv = config.environment.isDev
+                      ? BridgeEnvironment.prod
+                      : BridgeEnvironment.dev;
+                  config.switchEnvironment(nextEnv);
                 },
-              ),
-              const SizedBox(height: 30),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.login),
-                    label: const Text('Log In'),
-                    onPressed: () => authRepo.login('developer@flutter.io'),
+                icon: Icon(Icons.swap_horiz, color: colorScheme.onPrimary),
+                label: Text(
+                  config.environment.name.toUpperCase(),
+                  style: TextStyle(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.bold,
                   ),
-                  const SizedBox(width: 16),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.logout),
-                    label: const Text('Log Out'),
-                    onPressed: () => authRepo.logout(),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
-        ),
-      ),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Active API Base URL: ${config.getString('apiBaseUrl')}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  ListenableBuilder(
+                    listenable: homeController,
+                    builder: (context, _) {
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          homeController.message,
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: colorScheme.onPrimaryContainer,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 30),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.login),
+                        label: const Text('Log In'),
+                        onPressed: () => authRepo.login('developer@flutter.io'),
+                      ),
+                      const SizedBox(width: 16),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.logout),
+                        label: const Text('Log Out'),
+                        onPressed: () => authRepo.logout(),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1101,6 +1389,8 @@ class HomeScreen extends StatelessWidget {
 `modular_bridge` leverages Dart 3's `sealed class` hierarchy so errors can be exhaustively matched and handled predictably:
 
 ```dart
+class NonRegisteredService {}
+
 try {
   final service = bridge.get<NonRegisteredService>();
 } on BridgeDependencyNotFoundException catch (e) {
@@ -1164,9 +1454,8 @@ try {
 | `bridge.registerSingletonWithDependencies<T>` / `...Async` | Registers a singleton gated on `dependsOn` keys (sync or `FutureOr` factory) |
 | `dep<T>([name])` / `DependencyKey.of<T>([name])` | Shorthand aliases for building `dependsOn` keys |
 | `FeatureModule.healthCheck(bridge)` / `bridge.checkModuleHealth()` | Per-module health verification returning `ModuleHealthResult`s (with per-module `duration`) |
-| `BridgeConfig.fromAsset(path, loader:)` / `fromString` / `fromJson` | Loads configuration from JSON (loader-injected; `loadBridgeConfigFromAsset` wraps `rootBundle` in Flutter) |
+| `BridgeConfig.fromAsset(path, loader:)` / `fromString` / `fromJson` | Loads configuration from JSON (`loader: rootBundle.loadString` in Flutter) |
 | `BridgeConfig.fromEnvString` / `fromEnvFile(path, loader:)` | Loads configuration from dotenv content/files; env auto-detected via `BRIDGE_ENV`/`APP_ENV`/`ENVIRONMENT` |
-| `ModularBridgeInspector` (`modular_bridge_flutter`) | Read-only DevTools-style widget: registrations, modules, metrics, health check, event feed |
 | `bridge.createScope()` / `createScopeAsync(init)` | Creates a `BridgeScope` (optionally with async sealed setup) |
 | `bridge.pushNewScope` / `popScope` / `dropScope` / `popScopesTill` | Implicit scope stack |
 | `bridge.isScopeActive(name)` / `findScope(name)` | Scope stack membership / live-scope lookup |
@@ -1196,8 +1485,6 @@ try {
 | `config.switchEnvironment(env)` | Performs a runtime hot-switch across `dev`, `staging`, and `prod` |
 | `bridge.configValue<T>(key)` | Resolves config through the active scope chain with scope overrides |
 | `scope.setConfigValue` / `removeConfigValue` / `hasConfigOverride` / `configOverrides` / `configValue` | Per-scope configuration overrides that inherit to child scopes |
-| `context.bridge` / `context.get<T>()` | Resolves container dependencies directly from `BuildContext` |
-| `context.config` | Accesses active type-safe configuration from `BuildContext` |
 
 ---
 

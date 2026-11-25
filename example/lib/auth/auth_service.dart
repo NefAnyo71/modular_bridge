@@ -70,7 +70,9 @@ class AuthService extends ChangeNotifier implements Disposable {
     final email = _currentEmail ?? 'unknown';
     logger.log('Logging out $email...');
     _currentEmail = null;
-    bridge.publish(UserLoggedOutEvent(userId: 'usr_789'));
+    bridge.publish(
+      UserLoggedOutEvent(userId: 'usr_789', reason: 'User logged out manually'),
+    );
     notifyListeners();
   }
 
@@ -113,7 +115,9 @@ class MockAuthService extends AuthService {
   @override
   Future<void> logout() async {
     _currentEmailForMock = null;
-    bridge.publish(UserLoggedOutEvent(userId: 'mock_user'));
+    bridge.publish(
+      UserLoggedOutEvent(userId: 'mock_user', reason: 'Mock logout'),
+    );
     notifyListeners();
   }
 }

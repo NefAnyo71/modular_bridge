@@ -314,8 +314,9 @@ class ModularBridge {
 
   /// Emits the new [BridgeConfig] whenever [setConfig] swaps the configuration.
   ///
-  /// Listeners (e.g. `ModularBridgeProvider`) use this to re-subscribe to the
-  /// new config's streams; the old config's streams are no longer monitored.
+  /// Listeners (such as Flutter widgets or config observers) use this to
+  /// re-subscribe to the new config's streams; the old config's streams are
+  /// no longer monitored.
   Stream<BridgeConfig> get onConfigChanged => _configController.stream;
 
   /// Broadcast stream of dependency registration changes across the root

@@ -1,10 +1,8 @@
 /// High-performance, zero-dependency modular dependency injection,
 /// type-safe configuration, and decoupled event-bus architecture framework.
 ///
-/// Pure Dart core: no Flutter SDK dependency. Flutter widgets and helpers
-/// (`ModularBridgeScope`, `ModularBridgeProvider`, context extensions,
-/// `ModularBridgeInspector`, asset/env loaders) live in the companion
-/// package `package:modular_bridge_flutter`.
+/// Pure Dart core with zero external dependencies — works on the Dart VM,
+/// CLI tools, backend servers, and Flutter apps.
 library;
 
 // Core DI & Container

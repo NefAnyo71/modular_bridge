@@ -43,7 +43,7 @@
 
 - **`dependsOn` uses `DependencyKey`** instead of bare `Type`s so named registrations can be expressed: `DependencyKey(AuthRepository, 'primary')`.
 - **Async is first-class**: `registerDependencies` on modules may be `async`, `unregister`/`dispose`/`reset` return `Future`s you should `await`.
-- **Scopes are objects too**: `bridge.createScope()` gives you an explicit `BridgeScope` you can pass around — useful for per-request Flutter widgets (`ModularBridgeScope`).
+- **Scopes are objects too**: `bridge.createScope()` gives you an explicit `BridgeScope` you can pass around — useful for per-request or per-screen state.
 - **Modules own their registrations**: dependencies registered inside `FeatureModule.registerDependencies` are tracked per-module and rolled back automatically on failure.
 - **Config is reactive**: `registerConfigBinding` re-decodes config keys into DI registrations on every environment switch or `set`.
 

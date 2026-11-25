@@ -12,6 +12,7 @@
 * **Short registration aliases**: `singleton`, `lazySingleton`, `transient`, `asyncSingleton`, and `bind` (config binding) on both `ModularBridge` and `BridgeScope` — identical signatures to their `register*` counterparts, for the common cases where the shorter name reads better.
 * **`bridge.subscribe` options**: `onError`, `onDone`, and `cancelOnError` are now forwarded to the underlying event-bus subscription (previously only `ownerId` was exposed).
 * **Annotation exports**: `immutable`, `mustCallSuper`, `protected`, and `visibleForTesting` are now exported from `package:modular_bridge` so module authors can annotate overrides without importing `package:meta` or internal `src/` paths.
+* **Docs & example fixes**: unified README snippets and `example/` around a single pure-Dart `modular_bridge` package (removed obsolete `modular_bridge_flutter` references), fixed `UserLoggedOutEvent`, `AuthRepository`, and `MockAuthRepository` consistency, fixed Material 3 `AppBar` contrast in the runnable mini-app (`example/lib/mini_app.dart`), and added compiled snippet/widget tests (`example/test/readme_examples_test.dart`).
 
 ## 0.12.0
 

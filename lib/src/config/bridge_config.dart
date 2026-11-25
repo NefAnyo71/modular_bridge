@@ -106,8 +106,7 @@ class BridgeConfig {
   /// Loads a [BridgeConfig] from a JSON document supplied by [loader].
   ///
   /// This package is pure Dart and has no asset bundle, so the caller must
-  /// provide [loader] — e.g. `rootBundle.loadString` in Flutter apps (see
-  /// `package:modular_bridge_flutter` for a ready-made helper), or a file
+  /// provide [loader] — e.g. `rootBundle.loadString` in Flutter apps, or a file
   /// read in CLI/backend tools:
   ///
   /// ```dart

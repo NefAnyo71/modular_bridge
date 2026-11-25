@@ -16,6 +16,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:modular_bridge/modular_bridge.dart';
@@ -66,10 +67,19 @@ void main() async {
   ModularBridge.I.enableDevTools();
 
   // 4. Resolution interceptor: structured timing for every get/getAsync.
+  //    Resolutions often happen inside build(), so defer ValueNotifier updates
+  //    until after the frame to avoid markNeedsBuild() during build.
   ModularBridge.I.addResolutionInterceptor(
     BridgeInterceptors.timing((t) {
-      lastResolutionTiming.value =
-          '${t.request.type} ${t.elapsed.inMicroseconds}µs';
+      final text = '${t.request.type} ${t.elapsed.inMicroseconds}µs';
+      if (SchedulerBinding.instance.schedulerPhase ==
+          SchedulerPhase.persistentCallbacks) {
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          lastResolutionTiming.value = text;
+        });
+      } else {
+        lastResolutionTiming.value = text;
+      }
     }),
   );
 
@@ -153,21 +163,18 @@ class _ShowcaseScreenState extends State<ShowcaseScreen> {
           ),
         ],
       ),
-      body: AnimatedBuilder(
-        animation: Listenable.merge([vetoPingEvents, lastResolutionTiming]),
-        builder: (context, _) => IndexedStack(
-          index: _tab,
-          children: [
-            _FlowTab(
-                key: ValueKey('flow$_servicesVersion'),
-                onServicesChanged: _servicesChanged),
-            _EventConsoleTab(key: ValueKey('events$_servicesVersion')),
-            _InspectorTab(
-                key: ValueKey('inspector$_servicesVersion'),
-                onServicesChanged: _servicesChanged),
-            const _ConfigStudioTab(key: ValueKey('config')),
-          ],
-        ),
+      body: IndexedStack(
+        index: _tab,
+        children: [
+          _FlowTab(
+              key: ValueKey('flow$_servicesVersion'),
+              onServicesChanged: _servicesChanged),
+          _EventConsoleTab(key: ValueKey('events$_servicesVersion')),
+          _InspectorTab(
+              key: ValueKey('inspector$_servicesVersion'),
+              onServicesChanged: _servicesChanged),
+          const _ConfigStudioTab(key: ValueKey('config')),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
@@ -287,7 +294,7 @@ Widget _card(BuildContext context, {required Widget child}) => Card(
     );
 
 // =============================================================================
-// TAB 1: APP FLOW � Auth (Lazy circular dep + override), Cart, Home, Async
+// TAB 1: APP FLOW — Auth (Lazy circular dep + override), Cart, Home, Async
 // =============================================================================
 class _FlowTab extends StatefulWidget {
   const _FlowTab({super.key, required this.onServicesChanged});
@@ -298,8 +305,8 @@ class _FlowTab extends StatefulWidget {
 }
 
 class _FlowTabState extends State<_FlowTab> {
-  String _asyncInfo = '�';
-  String _pingResult = '�';
+  String _asyncInfo = '—';
+  String _pingResult = '—';
 
   ModularBridge get bridge => ModularBridge.I;
 
@@ -307,7 +314,7 @@ class _FlowTabState extends State<_FlowTab> {
     // callAsync: async counterpart of the call syntax.
     final store = await bridge.callAsync<SessionStore>();
     setState(() =>
-        _asyncInfo = '${store.endpoint} � connected=${store.isConnected}');
+        _asyncInfo = '${store.endpoint} — connected=${store.isConnected}');
   }
 
   Future<void> _pingApi() async {
@@ -375,8 +382,8 @@ class _FlowTabState extends State<_FlowTab> {
                 auth == null
                     ? 'AuthModule unloaded'
                     : auth.isAuthenticated
-                        ? '? ${auth.currentEmail} � profile: ${auth.profile.displayName}'
-                        : '? Signed out',
+                        ? 'Signed in: ${auth.currentEmail} — profile: ${auth.profile.displayName}'
+                        : 'Signed out',
                 style: TextStyle(
                   fontSize: 12,
                   color: auth?.isAuthenticated == true
@@ -452,7 +459,7 @@ class _FlowTabState extends State<_FlowTab> {
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'CartService is a ChangeNotifier resolved from DI � '
+                        'CartService is a ChangeNotifier resolved from DI — '
                         'AnimatedBuilder rebuilds this card. Logout clears '
                         'the cart via UserLoggedOutEvent.',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -489,7 +496,7 @@ class _FlowTabState extends State<_FlowTab> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('� ${item.name}',
+                                Text('• ${item.name}',
                                     style: const TextStyle(fontSize: 13)),
                                 Text('\$${item.price.toStringAsFixed(2)}',
                                     style: const TextStyle(
@@ -531,7 +538,7 @@ class _FlowTabState extends State<_FlowTab> {
                       const SizedBox(height: 6),
                       const Text(
                         'HomeController subscribes to login/logout events '
-                        'inside module.init � decoupled from AuthModule.',
+                        'inside module.init — decoupled from AuthModule.',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       const Divider(height: 20),
@@ -587,7 +594,7 @@ class _FlowTabState extends State<_FlowTab> {
               const SizedBox(height: 8),
               const Text(
                 'SessionStore is an eager asyncSingleton with a '
-                'BridgeRetryPolicy � resolved during warmup(). ApiClient is '
+                'BridgeRetryPolicy — resolved during warmup(). ApiClient is '
                 'config-bound: switching environment rebuilds it '
                 'automatically.',
                 style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -618,7 +625,7 @@ class _FlowTabState extends State<_FlowTab> {
 }
 
 // =============================================================================
-// TAB 2: EVENT CONSOLE � live bus feed, veto interceptor, once(), publishCounts
+// TAB 2: EVENT CONSOLE — live bus feed, veto interceptor, once(), publishCounts
 // =============================================================================
 class _EventConsoleTab extends StatelessWidget {
   const _EventConsoleTab({super.key});
@@ -722,7 +729,7 @@ class _EventConsoleTab extends StatelessWidget {
 }
 
 // =============================================================================
-// TAB 3: INSPECTOR � modules lifecycle, metrics, health, scopes, diagnostics
+// TAB 3: INSPECTOR — modules lifecycle, metrics, health, scopes, diagnostics
 // =============================================================================
 class _InspectorTab extends StatefulWidget {
   const _InspectorTab({super.key, required this.onServicesChanged});
@@ -734,7 +741,7 @@ class _InspectorTab extends StatefulWidget {
 
 class _InspectorTabState extends State<_InspectorTab> {
   String _scopeNote = 'No request scope active';
-  String _depEvents = '�';
+  String _depEvents = '—';
 
   ModularBridge get bridge => ModularBridge.I;
 
@@ -786,8 +793,8 @@ class _InspectorTabState extends State<_InspectorTab> {
       },
     );
     setState(() => _scopeNote =
-        'tenant=${bridge.configValue<String>('tenant', defaultValue: '�')} '
-            '� scopes=${bridge.activeScopeNames}');
+        'tenant=${bridge.configValue<String>('tenant', defaultValue: '—')} '
+            '— scopes=${bridge.activeScopeNames}');
   }
 
   Future<void> _popScope() async {
@@ -826,7 +833,7 @@ class _InspectorTabState extends State<_InspectorTab> {
                           if (r.duration != null)
                             '${r.duration!.inMilliseconds}ms',
                           if (r.error != null) '$r.error',
-                        ].join(' � '),
+                        ].join(' — '),
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
@@ -1008,7 +1015,7 @@ class _InspectorTabState extends State<_InspectorTab> {
               const SizedBox(height: 6),
               const Text(
                 'pushNewScopeAsync registers UserContext inside a '
-                '"request" scope and sets a scoped config override � '
+                '"request" scope and sets a scoped config override — '
                 'bridge.configValue resolves it through the scope chain.',
                 style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
@@ -1032,7 +1039,7 @@ class _InspectorTabState extends State<_InspectorTab> {
               ]),
               const SizedBox(height: 8),
               Text(_scopeNote, style: const TextStyle(fontSize: 12)),
-              if (_depEvents != '�')
+              if (_depEvents != '—')
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(_depEvents,
@@ -1048,7 +1055,7 @@ class _InspectorTabState extends State<_InspectorTab> {
 }
 
 // =============================================================================
-// TAB 4: CONFIG STUDIO � env hot-switch, config binding, runtime overrides
+// TAB 4: CONFIG STUDIO — env hot-switch, config binding, runtime overrides
 // =============================================================================
 class _ConfigStudioTab extends StatefulWidget {
   const _ConfigStudioTab({super.key});
@@ -1059,7 +1066,7 @@ class _ConfigStudioTab extends StatefulWidget {
 
 class _ConfigStudioTabState extends State<_ConfigStudioTab> {
   StreamSubscription<void>? _configSub;
-  String _apiClientInfo = '�';
+  String _apiClientInfo = '—';
 
   ModularBridge get bridge => ModularBridge.I;
 
@@ -1081,12 +1088,12 @@ class _ConfigStudioTabState extends State<_ConfigStudioTab> {
     final client = bridge.tryGet<ApiClient>();
     _apiClientInfo = client == null
         ? 'ApiClient not resolved'
-        : '${client.baseUrl} � ${client.timeout.inSeconds}s';
+        : '${client.baseUrl} — ${client.timeout.inSeconds}s';
   }
 
   void _switchEnvironment(BridgeEnvironment env) {
     bridge.config.switchEnvironment(env);
-    // registerConfigBinding already reset ApiClient � just re-resolve.
+    // registerConfigBinding already reset ApiClient — just re-resolve.
     setState(_refreshApiInfo);
   }
 
@@ -1118,7 +1125,7 @@ class _ConfigStudioTabState extends State<_ConfigStudioTab> {
               const Text(
                 'switchEnvironment fires config.onChanged; the '
                 'registerConfigBinding<ApiClient> resets and re-decodes '
-                'automatically � no manual unregister needed.',
+                'automatically — no manual unregister needed.',
                 style: TextStyle(fontSize: 12, color: Colors.black54),
               ),
               const SizedBox(height: 16),
@@ -1141,7 +1148,7 @@ class _ConfigStudioTabState extends State<_ConfigStudioTab> {
                 onSelectionChanged: (s) => _switchEnvironment(s.first),
               ),
               const SizedBox(height: 12),
-              Text('bound ApiClient � $_apiClientInfo',
+              Text('bound ApiClient — $_apiClientInfo',
                   style: const TextStyle(fontSize: 12)),
             ],
           ),
@@ -1250,7 +1257,7 @@ class _MetricChip extends StatelessWidget {
   }
 }
 
-/// Ping event used by the event-console "Fire Event" button � also the
+/// Ping event used by the event-console "Fire Event" button — also the
 /// target of the veto interceptor demo.
 final class _PingEvent extends BridgeEvent {
   _PingEvent(this.message);

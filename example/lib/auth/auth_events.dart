@@ -21,10 +21,12 @@ final class UserLoggedInEvent extends AuthEvent {
 
 /// Dispatched when the active session is terminated or invalidated.
 final class UserLoggedOutEvent extends AuthEvent {
-  UserLoggedOutEvent({required this.userId});
+  UserLoggedOutEvent({required this.userId, required this.reason});
 
   final String userId;
+  final String reason;
 
   @override
-  String toString() => 'UserLoggedOutEvent(userId: $userId)';
+  String toString() =>
+      'UserLoggedOutEvent(userId: $userId, reason: $reason)';
 }

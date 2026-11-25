@@ -34,8 +34,8 @@ final class CartModule extends FeatureModule {
     // Listen to UserLoggedOutEvent with auto-disposal lifecycle
     subscribe<UserLoggedOutEvent>(bridge, (event) {
       logger.log(
-          '[CartModule] User logged out (${event.userId}). Auto-clearing cart items.');
-      cartService.clear(reason: 'User session terminated');
+          '[CartModule] User logged out (${event.userId}: ${event.reason}). Auto-clearing cart items.');
+      cartService.clear(reason: event.reason);
     });
   }
 }

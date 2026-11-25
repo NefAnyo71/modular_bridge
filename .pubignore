@@ -29,6 +29,3 @@ migrate_working_dir/
 /build/
 **/build/
 /coverage/
-
-# Separate publishable package — must not ship inside modular_bridge.
-modular_bridge_flutter/

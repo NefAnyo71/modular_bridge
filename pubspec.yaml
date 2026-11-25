@@ -1,5 +1,5 @@
 name: modular_bridge
-description: "Pure Dart modular DI, type-safe config, event bus, and scopes — zero dependencies. Flutter widgets in modular_bridge_flutter."
+description: "Pure Dart modular dependency injection, type-safe config, decoupled event bus, and hierarchical scopes — zero external dependencies for Dart and Flutter."
 version: 0.13.0
 homepage: https://github.com/NefAnyo71/modular_bridge
 repository: https://github.com/NefAnyo71/modular_bridge
